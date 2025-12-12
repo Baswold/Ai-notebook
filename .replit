@@ -22,9 +22,9 @@ args = "Completeness Loop CLI"
 name = "Completeness Loop CLI"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python main.py --help && echo \"\" && echo \"=== Completeness Loop CLI Ready ===\" && echo \"Run with: python main.py start --idea <path> --workspace <path>\" && echo \"\" && python main.py status --workspace . 2>/dev/null || echo \"No active session. Use 'python main.py start' to begin.\""
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python main.py"
