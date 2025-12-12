@@ -108,7 +108,10 @@ class Orchestrator:
         
         self.llm = create_backend(config)
         self.tools = ToolRegistry(workspace)
-        self.context_builder = ContextBuilder(workspace)
+        self.context_builder = ContextBuilder(
+            workspace,
+            original_spec_name=idea_file.name if idea_file else "idea.md"
+        )
         
         agent1_prompt = config.agents.agent1_system_prompt
         if agent1_prompt and Path(agent1_prompt).exists():

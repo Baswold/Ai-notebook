@@ -4,8 +4,27 @@ from typing import List, Optional, Set
 
 
 class ContextBuilder:
-    def __init__(self, workspace: Path):
+    # Extensions for code files that Agent 2 should review
+    CODE_EXTENSIONS = {
+        ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".go", ".rs",
+        ".c", ".cpp", ".h", ".hpp", ".rb", ".php", ".swift", ".kt",
+        ".scala", ".sh", ".bash", ".zsh", ".sql", ".graphql", ".proto"
+    }
+    
+    # Config/data files that are also relevant
+    CONFIG_EXTENSIONS = {
+        ".yaml", ".yml", ".json", ".toml", ".ini", ".cfg",
+        ".html", ".css", ".scss", ".less", ".xml"
+    }
+    
+    # Extensions to BLOCK from Agent 2 (Agent 1 prose/summaries)
+    BLOCKED_EXTENSIONS = {
+        ".md", ".txt", ".doc", ".docx", ".rtf"
+    }
+    
+    def __init__(self, workspace: Path, original_spec_name: str = "idea.md"):
         self.workspace = workspace
+        self.original_spec_name = original_spec_name
         self.ignore_patterns = {
             ".git", "__pycache__", "node_modules", ".venv", "venv",
             ".env", ".idea", ".vscode", "*.pyc", "*.pyo", ".DS_Store",
@@ -48,6 +67,7 @@ class ContextBuilder:
         return False
     
     def read_all_source_files(self, extensions: Optional[Set[str]] = None) -> str:
+        """Read all source files (used by Agent 1)."""
         if extensions is None:
             extensions = {
                 ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".go", ".rs",
@@ -73,6 +93,139 @@ class ContextBuilder:
                     continue
         
         return "\n".join(contents)
+    
+    def read_code_only_files(self) -> str:
+        """
+        Read ONLY code files for Agent 2 review.
+        
+        CRITICAL: This method implements the air gap principle.
+        Agent 2 should NEVER see:
+        - .md files created by Agent 1 (except original spec)
+        - .txt files that might contain summaries
+        - Any documentation created during development
+        
+        Agent 2 ONLY sees:
+        - Original specification (idea.md)
+        - Source code files
+        - Config files (yaml, json, etc.)
+        - Test files
+        """
+        allowed_extensions = self.CODE_EXTENSIONS | self.CONFIG_EXTENSIONS
+        contents = []
+        
+        for file_path in self.workspace.rglob("*"):
+            if not file_path.is_file():
+                continue
+            if self._should_ignore(file_path):
+                continue
+            if any(self._should_ignore(p) for p in file_path.parents):
+                continue
+            
+            rel_path = file_path.relative_to(self.workspace)
+            rel_path_str = str(rel_path)
+            
+            # ALWAYS include original spec (match by filename or full path)
+            spec_name_lower = self.original_spec_name.lower()
+            if (rel_path_str.lower() == spec_name_lower or 
+                file_path.name.lower() == spec_name_lower or
+                rel_path_str.lower().endswith("/" + spec_name_lower)):
+                try:
+                    content = file_path.read_text(errors="replace")
+                    contents.append(f"### {rel_path} [ORIGINAL SPEC]\n```\n{content}\n```\n")
+                except Exception:
+                    pass
+                continue
+            
+            # BLOCK markdown and text files created during development
+            if file_path.suffix in self.BLOCKED_EXTENSIONS:
+                continue
+            
+            # Include code and config files
+            if file_path.suffix in allowed_extensions:
+                try:
+                    content = file_path.read_text(errors="replace")
+                    contents.append(f"### {rel_path}\n```\n{content}\n```\n")
+                except Exception:
+                    continue
+        
+        return "\n".join(contents)
+    
+    def run_tests(self, timeout: int = 60) -> str:
+        """
+        Run tests and capture output for Agent 2 review.
+        
+        Returns actual test execution output - this is FACTUAL evidence
+        that Agent 2 can use to verify implementation completeness.
+        """
+        test_commands = [
+            # Python
+            (["python", "-m", "pytest", "-v", "--tb=short"], "pytest"),
+            (["python", "-m", "unittest", "discover", "-v"], "unittest"),
+            # Node.js
+            (["npm", "test"], "npm test"),
+            # Go
+            (["go", "test", "./..."], "go test"),
+            # Rust
+            (["cargo", "test"], "cargo test"),
+        ]
+        
+        results = []
+        
+        for cmd, name in test_commands:
+            try:
+                result = subprocess.run(
+                    cmd,
+                    cwd=self.workspace,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout
+                )
+                
+                output = result.stdout + result.stderr
+                
+                # Skip if tool is unavailable (ModuleNotFoundError, command not found, etc.)
+                if "No module named" in output or "command not found" in output:
+                    continue
+                
+                if output.strip():
+                    exit_status = "PASSED" if result.returncode == 0 else "FAILED"
+                    results.append(f"### Test Results ({name}) - {exit_status}\n```\n{output}\n```\n")
+                    # Found working test framework - use it
+                    if result.returncode == 0 or "test" in output.lower():
+                        break
+                    
+            except FileNotFoundError:
+                continue
+            except subprocess.TimeoutExpired:
+                results.append(f"### Test Results ({name}) - TIMEOUT\nTests exceeded {timeout}s timeout\n")
+                break
+            except Exception as e:
+                continue
+        
+        if not results:
+            # Try to find and run test files directly
+            test_files = list(self.workspace.rglob("test_*.py"))
+            test_files.extend(self.workspace.rglob("*_test.py"))
+            
+            if test_files:
+                for test_file in test_files[:3]:  # Limit to 3 test files
+                    try:
+                        result = subprocess.run(
+                            ["python", str(test_file)],
+                            cwd=self.workspace,
+                            capture_output=True,
+                            text=True,
+                            timeout=timeout
+                        )
+                        output = result.stdout + result.stderr
+                        if output.strip():
+                            rel_path = test_file.relative_to(self.workspace)
+                            exit_status = "PASSED" if result.returncode == 0 else "FAILED"
+                            results.append(f"### Test Results ({rel_path}) - {exit_status}\n```\n{output}\n```\n")
+                    except Exception:
+                        continue
+        
+        return "\n".join(results) if results else "No tests found or executed."
     
     def get_git_log(self, count: int = 10) -> str:
         try:
@@ -126,24 +279,45 @@ class ContextBuilder:
 {files_str}
 """
     
-    def build_agent2_context(self) -> str:
+    def build_agent2_context(self, run_tests: bool = True) -> str:
+        """
+        Build context for Agent 2 review.
+        
+        CRITICAL AIR GAP IMPLEMENTATION:
+        - Uses read_code_only_files() to exclude .md/.txt files
+        - Includes test execution results (factual evidence)
+        - Git log included but Agent 2 trained to ignore completion claims
+        """
         tree = self.build_file_tree()
-        files_str = self.read_all_source_files()
+        
+        # CODE ONLY - no markdown or text files from Agent 1
+        files_str = self.read_code_only_files()
+        
         git_log = self.get_git_log()
         
-        return f"""### File Tree
+        context = f"""### File Tree
 ```
 {tree}
 ```
 
-### Source Files
+### Source Files (CODE ONLY - No Agent 1 Documentation)
 {files_str}
 
-### Git Log
+### Git Log (Verify claims in actual code, not commit messages)
 ```
 {git_log}
 ```
 """
+        
+        # Add test results if requested (factual verification)
+        if run_tests:
+            test_results = self.run_tests()
+            context += f"""
+### Test Execution Results (FACTUAL - Use to verify completeness)
+{test_results}
+"""
+        
+        return context
     
     def estimate_tokens(self, text: str) -> int:
         return len(text) // 4

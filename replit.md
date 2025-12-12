@@ -14,8 +14,21 @@ Agent 2 uses different system prompts depending on the phase:
 - **Implementation Phase** (score < 70%): Reviews codebase, assigns implementation tasks
 - **Testing Phase** (score >= 70%): Reviews test suite, assigns testing tasks
 
-### Key Design Decision
+### Key Design Decision: Air Gap Principle
 Agent 2 NEVER sees Agent 1's self-assessments or explanations - only the code. This prevents same-model bias where Agent 2 might be persuaded by Agent 1's confident-but-wrong summaries.
+
+**What Agent 2 sees:**
+- Original specification (idea.md from user)
+- Source code files (.py, .js, .ts, etc.)
+- Config files (.yaml, .json, .toml, etc.)
+- Test execution results (FACTUAL output from running tests)
+- Git log (but trained to verify claims in code)
+
+**What Agent 2 NEVER sees:**
+- Agent 1's response text/explanations
+- README or documentation created during development
+- .md/.txt files written by Agent 1
+- Commit message claims about completion
 
 ## Project Structure
 ```
@@ -94,6 +107,7 @@ Supports YAML config for:
 - **OpenAI-compatible**: Any API endpoint (vLLM, text-gen-inference, etc.)
 
 ## Recent Changes
+- Enhanced air gap: Agent 2 now blocks .md/.txt files, adds test execution results - Dec 2025
 - Added dual Agent 2 prompts (implementation vs testing phases) - Dec 2025
 - Added LM Studio backend support - Dec 2025
 - Initial implementation - Dec 2025
