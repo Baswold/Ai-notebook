@@ -1,69 +1,66 @@
 # Completeness Loop Configuration
 # ================================
-# Copy this file and customize for your setup.
 
 completeness_loop_config:
   
   # Model Configuration
-  # -------------------
-  # backend options: ollama, lmstudio, mlx, openai
   model:
-    # For Ollama (recommended - easy setup)
-    name: "devstral"           # Model name in Ollama
-    backend: "ollama"          # Use Ollama backend
-    # base_url: "http://localhost:11434"  # Default Ollama URL
-    
-    # For LM Studio (great GUI)
-    # name: "local-model"      # LM Studio uses loaded model
-    # backend: "lmstudio"
-    # base_url: "http://localhost:1234"  # Default LM Studio URL
-    
-    # For MLX (native Apple Silicon)
-    # name: "mistralai/Devstral-Small-2-24B-Instruct"
-    # backend: "mlx"
-    
+    name: "devstral"
+    backend: "ollama"
     max_tokens: 4096
     temperature: 0.7
     base_url: null
   
   # Limits
-  # ------
   limits:
-    max_iterations: 50         # Max cycles before stopping
-    max_runtime_hours: 12      # Max hours to run
-    max_commits: 200           # Max git commits
-    completion_threshold: 95   # Score needed to mark complete
+    max_iterations: 50
+    max_runtime_hours: 12
+    max_commits: 200
+    completion_threshold: 95
   
-  # Agent Prompts (optional)
-  # ------------------------
-  # Provide custom prompt files if you want to customize agent behavior
+  # Agent Prompts
   agents:
-    agent1_system_prompt: null  # Path to custom Agent 1 prompt file
-    agent2_system_prompt: null  # Path to custom Agent 2 prompt file
+    agent1_system_prompt: null
+    agent2_implementation_prompt: null
+    agent2_testing_prompt: null
     agent1_context_token_limit: 32000
     agent2_context_token_limit: 32000
+    testing_phase_threshold: 70
   
   # Monitoring
-  # ----------
   monitoring:
     log_level: "INFO"
     token_tracking: true
     log_file: "completeness_loop.log"
 
 
-# Quick Setup Examples:
-# ====================
+# =============================================================================
+# CONFIGURATION REFERENCE
+# =============================================================================
 #
-# 1. Ollama Setup (macOS):
-#    brew install ollama
-#    ollama pull devstral
-#    ollama serve
+# MODEL BACKENDS:
+#   ollama    - Local LLM server (brew install ollama && ollama pull devstral)
+#   lmstudio  - LM Studio GUI (https://lmstudio.ai)
+#   mlx       - Native Apple Silicon (pip install mlx-lm)
+#   openai    - Any OpenAI-compatible API (set base_url)
 #
-# 2. LM Studio Setup:
-#    - Download from https://lmstudio.ai
-#    - Load a model (Devstral, CodeLlama, DeepSeek Coder)
-#    - Start local server (port 1234)
+# AGENT2 DUAL PROMPTS:
+#   The system uses TWO different prompts for Agent 2:
+#   
+#   1. agent2_implementation_prompt (used when score < testing_phase_threshold)
+#      - Reviews codebase against spec
+#      - Focuses on implementation completeness
+#      - Tells Agent 1 what features to build
+#   
+#   2. agent2_testing_prompt (used when score >= testing_phase_threshold)
+#      - Reviews test suite quality
+#      - Focuses on test coverage and edge cases
+#      - Tells Agent 1 what tests to write
 #
-# 3. MLX Setup (Apple Silicon only):
-#    pip install mlx-lm
-#    # Model downloads automatically on first run
+# PHASE TRANSITION:
+#   testing_phase_threshold: 70  # Switch to testing phase at 70% complete
+#
+# CUSTOM PROMPTS:
+#   agent1_system_prompt: "prompts/agent1_system.txt"
+#   agent2_implementation_prompt: "prompts/agent2_implementation.txt"
+#   agent2_testing_prompt: "prompts/agent2_testing.txt"

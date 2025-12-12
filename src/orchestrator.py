@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import subprocess
 
-from .config import LoopConfig, DEFAULT_AGENT1_PROMPT, DEFAULT_AGENT2_PROMPT
+from .config import (
+    LoopConfig,
+    DEFAULT_AGENT1_PROMPT,
+    DEFAULT_AGENT2_IMPLEMENTATION_PROMPT,
+    DEFAULT_AGENT2_TESTING_PROMPT
+)
 from .llm import create_backend, TokenUsage
 from .tools import ToolRegistry
 from .agents import Agent1, Agent2, ReviewResult, AgentResponse
@@ -34,6 +39,7 @@ class LoopState:
     is_complete: bool = False
     start_time: Optional[float] = None
     last_review: Optional[ReviewResult] = None
+    phase: str = "implementation"
     
     def to_dict(self) -> dict:
         return {
@@ -51,7 +57,8 @@ class LoopState:
             "completeness_history": self.completeness_history,
             "is_paused": self.is_paused,
             "is_complete": self.is_complete,
-            "start_time": self.start_time
+            "start_time": self.start_time,
+            "phase": self.phase
         }
     
     @classmethod
@@ -62,6 +69,7 @@ class LoopState:
         state.is_paused = data.get("is_paused", False)
         state.is_complete = data.get("is_complete", False)
         state.start_time = data.get("start_time")
+        state.phase = data.get("phase", "implementation")
         
         a1_usage = data.get("total_agent1_usage", {})
         state.total_agent1_usage = TokenUsage(
@@ -108,16 +116,29 @@ class Orchestrator:
         else:
             agent1_prompt = DEFAULT_AGENT1_PROMPT
         
-        agent2_prompt = config.agents.agent2_system_prompt
-        if agent2_prompt and Path(agent2_prompt).exists():
-            agent2_prompt = Path(agent2_prompt).read_text()
+        agent2_impl_prompt = config.agents.agent2_implementation_prompt
+        if agent2_impl_prompt and Path(agent2_impl_prompt).exists():
+            agent2_impl_prompt = Path(agent2_impl_prompt).read_text()
         else:
-            agent2_prompt = DEFAULT_AGENT2_PROMPT
+            agent2_impl_prompt = DEFAULT_AGENT2_IMPLEMENTATION_PROMPT
+        
+        agent2_test_prompt = config.agents.agent2_testing_prompt
+        if agent2_test_prompt and Path(agent2_test_prompt).exists():
+            agent2_test_prompt = Path(agent2_test_prompt).read_text()
+        else:
+            agent2_test_prompt = DEFAULT_AGENT2_TESTING_PROMPT
         
         self.agent1 = Agent1(self.llm, self.tools, agent1_prompt)
-        self.agent2 = Agent2(self.llm, agent2_prompt)
+        self.agent2_implementation = Agent2(self.llm, agent2_impl_prompt)
+        self.agent2_testing = Agent2(self.llm, agent2_test_prompt)
+        self.testing_threshold = config.agents.testing_phase_threshold
         
         self.original_spec = idea_file.read_text() if idea_file.exists() else ""
+    
+    def _get_agent2(self) -> Agent2:
+        if self.state.phase == "testing":
+            return self.agent2_testing
+        return self.agent2_implementation
     
     def _update_status(self, status: str):
         if self.on_status_change:
@@ -202,7 +223,8 @@ Begin implementation now.
                 duration_seconds=time.time() - cycle_start
             )
         
-        self._update_status(f"Cycle {cycle_num}: Agent 2 reviewing...")
+        phase_label = "testing" if self.state.phase == "testing" else "implementation"
+        self._update_status(f"Cycle {cycle_num}: Agent 2 reviewing ({phase_label})...")
         
         # CRITICAL ISOLATION: Agent 2 context is built ONLY from filesystem state.
         # Agent 1's response (agent1_response) is NEVER passed to Agent 2.
@@ -214,7 +236,9 @@ Begin implementation now.
         
         try:
             # Note: agent1_response is intentionally NOT passed here
-            review = self.agent2.review(
+            # Uses phase-appropriate Agent 2 (implementation or testing reviewer)
+            agent2 = self._get_agent2()
+            review = agent2.review(
                 original_spec=self.original_spec,
                 codebase_context=codebase_for_review,
                 git_log=git_log
@@ -235,8 +259,14 @@ Begin implementation now.
         self.state.completeness_history.append({
             "cycle": cycle_num,
             "score": review.completeness_score,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "phase": self.state.phase
         })
+        
+        # Phase transition: switch to testing phase when threshold is reached
+        if self.state.phase == "implementation" and review.completeness_score >= self.testing_threshold:
+            self.state.phase = "testing"
+            self._update_status(f"Phase transition: Switching to TESTING mode (score: {review.completeness_score}%)")
         
         if review.is_complete:
             self.state.is_complete = True
@@ -302,6 +332,7 @@ Begin implementation now.
             "cycle_count": self.state.cycle_count,
             "is_complete": self.state.is_complete,
             "is_paused": self.state.is_paused,
+            "phase": self.state.phase,
             "elapsed_seconds": elapsed,
             "current_score": self.state.completeness_history[-1]["score"] if self.state.completeness_history else 0,
             "agent1_tokens": self.state.total_agent1_usage.total_tokens,
