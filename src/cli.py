@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from datetime import datetime, timedelta
 import subprocess
+from typing import Optional
 
 from rich.console import Console
 from rich.panel import Panel
@@ -58,10 +59,6 @@ def print_banner():
     ))
 
 
-def print_step(icon: str, msg: str, style: str = "white"):
-    console.print(f"  {icon}  {msg}", style=style)
-
-
 def print_error(msg: str):
     console.print(f"  [{COLORS['error']}]✗[/]  {msg}")
 
@@ -88,14 +85,12 @@ def format_duration(seconds: float) -> str:
     return str(timedelta(seconds=int(seconds)))
 
 
-def detect_idea_file(directory: Path) -> "Path | None":
-    candidates = ["idea.md", "IDEA.md", "spec.md", "SPEC.md", "README.md", "project.md"]
+def detect_idea_file(directory: Path) -> Optional[Path]:
+    candidates = ["idea.md", "IDEA.md", "spec.md", "SPEC.md", "project.md"]
     for name in candidates:
         path = directory / name
         if path.exists():
             return path
-    for path in directory.glob("*.md"):
-        return path
     return None
 
 
@@ -214,65 +209,197 @@ def print_final_summary(status: dict, elapsed: float):
     console.print()
 
 
-def print_help():
-    help_text = """[bold]Interactive Commands:[/]
-  [cyan]go[/] / [cyan]start[/]     Start the autonomous loop
-  [cyan]resume[/]         Resume a paused session
-  [cyan]status[/]         Show current progress
-  [cyan]history[/]        Show completeness score history
-  [cyan]config[/]         Generate config.yaml
-  [cyan]backends[/]       List available LLM backends
-  [cyan]help[/]           Show this help
-  [cyan]quit[/] / [cyan]q[/]       Exit
+def multiline_input(prompt_text: str, hint: str = "") -> str:
+    console.print()
+    console.print(Panel(
+        f"{prompt_text}\n\n[{COLORS['muted']}]{hint}[/]",
+        border_style=COLORS["cyan"],
+        box=box.ROUNDED,
+    ))
+    console.print()
+    
+    lines = []
+    console.print(f"  [{COLORS['muted']}]Enter your text (empty line + Enter to finish):[/]")
+    console.print()
+    
+    while True:
+        try:
+            line = prompt(
+                HTML('<prompt>  │ </prompt>'),
+                style=pt_style,
+            )
+            if line == "" and lines and lines[-1] == "":
+                lines.pop()
+                break
+            lines.append(line)
+        except EOFError:
+            break
+        except KeyboardInterrupt:
+            return ""
+    
+    return "\n".join(lines)
 
-[bold]Quick Start:[/]
-  Just type [cyan]go[/] and press Enter to start!
-  The agent will read your idea.md and build the project.
-  Press [bold]Ctrl+C[/] anytime to pause."""
-    console.print(Panel(help_text, border_style=COLORS["muted"], box=box.ROUNDED, title="Help"))
+
+def single_input(prompt_text: str, default: str = "") -> str:
+    try:
+        suffix = f" [{default}]" if default else ""
+        result = prompt(
+            HTML(f'<prompt>  {prompt_text}{suffix}: </prompt>'),
+            style=pt_style,
+            default="",
+        )
+        return result.strip() if result.strip() else default
+    except (EOFError, KeyboardInterrupt):
+        return default
 
 
 class CompletenessREPL:
-    def __init__(self, base_dir: "Path | None" = None):
+    def __init__(self, base_dir: Optional[Path] = None):
         self.base_dir = base_dir or Path.cwd()
         self.config = LoopConfig()
-        self.workspace = None
-        self.idea_file = None
-        self.orchestrator = None
+        self.workspace: Optional[Path] = None
+        self.idea_file: Optional[Path] = None
+        self.orchestrator: Optional[Orchestrator] = None
         self.running = False
         self.history = InMemoryHistory()
+        self.custom_instructions = ""
     
     def get_prompt_text(self):
         return HTML('<prompt>❯ </prompt>')
     
     def auto_detect(self) -> bool:
         self.idea_file = detect_idea_file(self.base_dir)
-        if not self.idea_file:
-            return False
-        self.workspace = setup_workspace(self.base_dir)
-        return True
+        if self.idea_file:
+            self.workspace = setup_workspace(self.base_dir)
+            return True
+        return False
     
-    def print_setup_info(self):
-        table = Table(show_header=False, box=None, padding=(0, 1))
-        table.add_column(style=COLORS["muted"], width=12)
-        table.add_column(style="white")
-        
-        idea_display = self.idea_file.name if self.idea_file else "[not found]"
-        workspace_display = str(self.workspace.relative_to(self.base_dir)) if self.workspace else "[not set]"
-        
-        table.add_row("Idea file", idea_display)
-        table.add_row("Workspace", workspace_display)
-        table.add_row("Backend", self.config.model.backend)
-        table.add_row("Model", self.config.model.name)
-        
+    def print_config(self):
         console.print()
-        console.print(table)
+        console.print(f"  [{COLORS['muted']}]Current Settings:[/]")
         console.print()
+        
+        idea_display = self.idea_file.name if self.idea_file else "[none]"
+        workspace_display = str(self.workspace.relative_to(self.base_dir)) if self.workspace else "./workspace"
+        instr_preview = self.custom_instructions[:35] + "..." if len(self.custom_instructions) > 35 else self.custom_instructions
+        instr_display = instr_preview.replace("\n", " ") if self.custom_instructions else "[none]"
+        
+        console.print(f"  [{COLORS['cyan']}][1][/] Idea file     {idea_display}")
+        console.print(f"  [{COLORS['cyan']}][2][/] Workspace     {workspace_display}")
+        console.print(f"  [{COLORS['cyan']}][3][/] Backend       {self.config.model.backend}")
+        console.print(f"  [{COLORS['cyan']}][4][/] Model         {self.config.model.name}")
+        console.print(f"  [{COLORS['cyan']}][5][/] Max cycles    {self.config.limits.max_iterations}")
+        console.print(f"  [{COLORS['cyan']}][6][/] Instructions  {instr_display}")
+        console.print()
+    
+    def prompt_for_idea(self):
+        console.print()
+        print_error("No idea.md file found in current directory")
+        console.print()
+        
+        idea_content = multiline_input(
+            "Paste your project idea below",
+            "Describe what you want to build. Be specific about features, technology, etc."
+        )
+        
+        if idea_content.strip():
+            idea_path = self.base_dir / "idea.md"
+            idea_path.write_text(idea_content)
+            self.idea_file = idea_path
+            self.workspace = setup_workspace(self.base_dir)
+            print_success(f"Created {idea_path.name}")
+            return True
+        return False
+    
+    def prompt_for_instructions(self):
+        console.print()
+        self.custom_instructions = multiline_input(
+            "Any custom instructions for the agent?",
+            "Optional. Add coding style preferences, specific requirements, etc."
+        )
+        if self.custom_instructions:
+            print_success("Custom instructions saved")
+    
+    def settings_menu(self):
+        while True:
+            self.print_config()
+            console.print(f"  [{COLORS['cyan']}]Enter number to change, or press Enter to continue:[/]")
+            console.print()
+            
+            try:
+                choice = prompt(
+                    HTML('<prompt>  ❯ </prompt>'),
+                    style=pt_style,
+                ).strip()
+            except (EOFError, KeyboardInterrupt):
+                break
+            
+            if not choice:
+                break
+            
+            if choice == "1":
+                if not self.idea_file:
+                    self.prompt_for_idea()
+                else:
+                    console.print(f"  [{COLORS['muted']}]Current idea file: {self.idea_file}[/]")
+                    if single_input("Replace it? (y/n)", "n").lower() == "y":
+                        self.prompt_for_idea()
+            
+            elif choice == "2":
+                new_ws = single_input("Workspace path", "./workspace")
+                self.workspace = (self.base_dir / new_ws).resolve()
+                print_success(f"Workspace: {self.workspace}")
+            
+            elif choice == "3":
+                console.print(f"  [{COLORS['muted']}]Available: ollama, lmstudio, mlx, openai[/]")
+                new_backend = single_input("Backend", self.config.model.backend)
+                self.config.model.backend = new_backend
+                print_success(f"Backend: {new_backend}")
+            
+            elif choice == "4":
+                new_model = single_input("Model name", self.config.model.name)
+                self.config.model.name = new_model
+                print_success(f"Model: {new_model}")
+            
+            elif choice == "5":
+                new_max = single_input("Max cycles", str(self.config.limits.max_iterations))
+                try:
+                    self.config.limits.max_iterations = int(new_max)
+                    print_success(f"Max cycles: {new_max}")
+                except ValueError:
+                    print_error("Invalid number")
+            
+            elif choice == "6":
+                self.prompt_for_instructions()
     
     def cmd_go(self):
-        if not self.idea_file or not self.workspace:
-            print_error("No idea.md found in current directory")
-            console.print(f"  [{COLORS['muted']}]Create an idea.md file describing your project[/]")
+        if not self.idea_file:
+            if not self.prompt_for_idea():
+                print_error("Cannot start without a project idea")
+                return
+        
+        if not self.workspace:
+            self.workspace = setup_workspace(self.base_dir)
+        
+        self.settings_menu()
+        
+        if not self.idea_file:
+            print_error("No idea file configured")
+            return
+        
+        console.print()
+        console.print(Panel(
+            "Ready to start autonomous development?\n\n"
+            f"[{COLORS['muted']}]The agent will read your idea and build the project.[/]\n"
+            f"[{COLORS['muted']}]Press Ctrl+C anytime to pause.[/]",
+            border_style=COLORS["cyan"],
+            box=box.ROUNDED,
+        ))
+        console.print()
+        
+        confirm = single_input("Start building? (y/n)", "y")
+        if confirm.lower() != "y":
+            console.print(f"  [{COLORS['muted']}]Cancelled. Type 'go' to try again.[/]")
             return
         
         console.print()
@@ -283,28 +410,31 @@ class CompletenessREPL:
             idea_in_workspace = copy_idea_to_workspace(self.idea_file, workspace)
             git_initialized = init_git(workspace)
         
-        print_success(f"Workspace ready: {self.workspace}")
+        print_success(f"Workspace ready: {workspace}")
         if git_initialized:
             print_success("Git repository initialized")
         print_success(f"Project spec: {idea_in_workspace.name}")
         
         console.print()
         
+        custom_part = ""
+        if self.custom_instructions:
+            custom_part = f"\n\nADDITIONAL INSTRUCTIONS:\n{self.custom_instructions}"
+        
         initial_prompt = f"""Build the complete project described in @idea.md
 
 Read the specification file carefully, then implement everything it describes.
 Work systematically through all requirements.
 Create proper project structure, write clean code, and ensure it runs correctly.
-Commit your progress after completing each major feature.
+Commit your progress after completing each major feature.{custom_part}
 
 Start now."""
         
-        self._run_loop(self.idea_file, self.workspace, initial_prompt=initial_prompt)
+        self._run_loop(self.idea_file, workspace, initial_prompt=initial_prompt)
     
     def cmd_resume(self):
         if not self.workspace:
-            print_error("No workspace found")
-            return
+            self.workspace = setup_workspace(self.base_dir)
         
         state_file = self.workspace / ".completeness_state.json"
         if not state_file.exists():
@@ -312,16 +442,19 @@ Start now."""
             console.print(f"  [{COLORS['muted']}]Use 'go' to start a new session[/]")
             return
         
+        if not self.idea_file:
+            self.idea_file = detect_idea_file(self.base_dir) or (self.workspace / "idea.md")
+        
         self._run_loop(self.idea_file, self.workspace, resume=True)
     
-    def _run_loop(self, idea_path, workspace_path, resume=False, initial_prompt=None):
+    def _run_loop(self, idea_path: Path, workspace_path: Path, resume: bool = False, initial_prompt: str = ""):
         start_time = time.time()
         
-        def on_cycle(result):
+        def on_cycle(result: CycleResult):
             phase = self.orchestrator.state.phase if self.orchestrator else "implementation"
             print_cycle_result(result, phase)
         
-        def on_status(status):
+        def on_status(status: str):
             print_info(status)
         
         self.orchestrator = Orchestrator(
@@ -360,8 +493,7 @@ Start now."""
     
     def cmd_status(self):
         if not self.workspace:
-            print_error("No workspace configured")
-            return
+            self.workspace = setup_workspace(self.base_dir)
         
         state_file = self.workspace / ".completeness_state.json"
         if not state_file.exists():
@@ -388,8 +520,7 @@ Start now."""
     
     def cmd_history(self):
         if not self.workspace:
-            print_error("No workspace configured")
-            return
+            self.workspace = setup_workspace(self.base_dir)
         
         state_file = self.workspace / ".completeness_state.json"
         if not state_file.exists():
@@ -435,24 +566,29 @@ Start now."""
         self.config.save(output)
         print_success(f"Config saved to {output}")
     
+    def print_help(self):
+        help_text = """[bold]Commands:[/]
+  [cyan]go[/]           Start or configure a new session
+  [cyan]resume[/]       Resume a paused session
+  [cyan]status[/]       Show current progress
+  [cyan]history[/]      Show completeness score history
+  [cyan]settings[/]     Change configuration
+  [cyan]backends[/]     List available LLM backends
+  [cyan]help[/]         Show this help
+  [cyan]quit[/]         Exit"""
+        console.print(Panel(help_text, border_style=COLORS["muted"], box=box.ROUNDED, title="Help"))
+    
     def run(self):
         print_banner()
         
-        if self.auto_detect():
-            self.print_setup_info()
-            console.print(f"  [{COLORS['cyan']}]Type 'go' to start building, or 'help' for options[/]")
+        found_idea = self.auto_detect()
+        
+        if found_idea:
+            self.print_config()
+            console.print(f"  [{COLORS['cyan']}]Type 'go' to configure and start, or 'help' for options[/]")
         else:
             console.print()
-            print_error("No idea.md file found in current directory")
-            console.print()
-            console.print(f"  [{COLORS['muted']}]Create a file called [bold]idea.md[/] describing your project,[/]")
-            console.print(f"  [{COLORS['muted']}]then run this again.[/]")
-            console.print()
-            console.print(f"  [{COLORS['muted']}]Example idea.md:[/]")
-            console.print(f"  [{COLORS['muted']}]  # My Todo App[/]")
-            console.print(f"  [{COLORS['muted']}]  Build a command-line todo list manager with...[/]")
-            console.print()
-            return
+            console.print(f"  [{COLORS['muted']}]No idea.md found. Type 'go' to create one.[/]")
         
         console.print()
         
@@ -487,12 +623,14 @@ Start now."""
                 self.cmd_status()
             elif cmd in ("history", "score", "scores"):
                 self.cmd_history()
+            elif cmd == "settings":
+                self.settings_menu()
             elif cmd == "backends":
                 self.cmd_backends()
             elif cmd == "config":
                 self.cmd_config()
             elif cmd == "help":
-                print_help()
+                self.print_help()
             else:
                 print_error(f"Unknown command: {cmd}")
                 console.print(f"  [{COLORS['muted']}]Type 'help' for available commands[/]")
@@ -504,7 +642,7 @@ Start now."""
 
 def main():
     base_dir = Path.cwd()
-    if len(sys.argv) > 1:
+    if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
         base_dir = Path(sys.argv[1]).resolve()
     
     repl = CompletenessREPL(base_dir)
