@@ -273,15 +273,65 @@ class ToolRegistry:
         except Exception as e:
             return ToolResult(False, "", str(e))
     
+    def _validate_path(self, path: str) -> Path:
+        """
+        Validate that a path stays within the workspace.
+        Prevents directory traversal attacks and symlink escapes.
+        """
+        workspace_abs = self.workspace.resolve()
+
+        # Resolve the target path
+        if path.startswith("/"):
+            # Absolute paths are not allowed
+            raise PermissionError(
+                f"Access denied: Absolute paths are not allowed. "
+                f"Use relative paths only. Path: {path}"
+            )
+
+        # Construct the full path
+        target = workspace_abs / path
+        target_abs = target.resolve()
+
+        # Check if resolved path is within workspace
+        try:
+            target_abs.relative_to(workspace_abs)
+        except ValueError:
+            raise PermissionError(
+                f"Access denied: {path} is outside workspace. "
+                f"All operations must stay within {workspace_abs}"
+            )
+
+        return target_abs
+
     def _resolve_path(self, path: str) -> Path:
-        resolved = self.workspace / path
-        resolved = resolved.resolve()
-        if not str(resolved).startswith(str(self.workspace.resolve())):
-            raise ValueError(f"Path escapes workspace: {path}")
-        return resolved
+        """Alias for _validate_path for backwards compatibility."""
+        return self._validate_path(path)
     
     def _bash(self, command: str, timeout: int = 120) -> ToolResult:
         try:
+            # Prevent directory escape attempts
+            forbidden_patterns = [
+                r"cd\s+/",  # cd to absolute paths
+                r"cd\s+\.\.",  # cd to parent directory
+                r"/etc/",  # access to system directories
+                r"/var/",
+                r"/usr/",
+                r"/bin/",
+                r"/sbin/",
+                r"/root/",
+                r"/home/[^/]*$",  # home directory outside workspace
+            ]
+
+            import re
+            for pattern in forbidden_patterns:
+                if re.search(pattern, command):
+                    return ToolResult(
+                        False,
+                        "",
+                        f"Command blocked: Detected attempt to access files outside workspace. "
+                        f"All commands must operate within the workspace directory."
+                    )
+
             result = subprocess.run(
                 command,
                 shell=True,

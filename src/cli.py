@@ -352,10 +352,14 @@ class CompletenessREPL:
                 print_success(f"Workspace: {self.workspace}")
             
             elif choice == "3":
-                console.print(f"  [{COLORS['muted']}]Available: ollama, lmstudio, mlx, openai[/]")
+                console.print(f"  [{COLORS['muted']}]Available: anthropic, ollama, lmstudio, mlx, openai, mistral[/]")
                 new_backend = single_input("Backend", self.config.model.backend)
                 self.config.model.backend = new_backend
                 print_success(f"Backend: {new_backend}")
+
+                # Prompt for API key if switching to OpenAI or Anthropic
+                if new_backend.lower() in ("openai", "gpt", "anthropic", "claude"):
+                    self._prompt_for_api_key()
             
             elif choice == "4":
                 new_model = single_input("Model name", self.config.model.name)
@@ -372,7 +376,47 @@ class CompletenessREPL:
             
             elif choice == "6":
                 self.prompt_for_instructions()
-    
+
+    def _prompt_for_api_key(self):
+        """Prompt user for API key based on the configured backend."""
+        import os
+
+        backend = self.config.model.backend.lower()
+
+        if backend in ("anthropic", "claude"):
+            env_var = "ANTHROPIC_API_KEY"
+            config_key = "anthropic_api_key"
+            service_name = "Anthropic"
+            service_url = "https://console.anthropic.com/"
+        elif backend in ("openai", "gpt"):
+            env_var = "OPENAI_API_KEY"
+            config_key = "openai_api_key"
+            service_name = "OpenAI"
+            service_url = "https://platform.openai.com/api-keys"
+        else:
+            return
+
+        console.print()
+        existing_key = os.environ.get(env_var) or getattr(self.config.model, config_key, None)
+
+        if existing_key:
+            masked_key = existing_key[:7] + "*" * (len(existing_key) - 11) + existing_key[-4:] if len(existing_key) > 11 else "*" * len(existing_key)
+            console.print(f"  [{COLORS['muted']}]Current {service_name} key: {masked_key}[/]")
+            if single_input("Use existing key? (y/n)", "y").lower() == "y":
+                os.environ[env_var] = existing_key
+                return
+
+        console.print(f"  [{COLORS['muted']}]Your {service_name} API key is not shared or stored in plain text.[/]")
+        api_key = single_input(f"Enter your {service_name} API key", "")
+
+        if api_key.strip():
+            setattr(self.config.model, config_key, api_key)
+            os.environ[env_var] = api_key
+            masked = api_key[:7] + "*" * (len(api_key) - 11) + api_key[-4:] if len(api_key) > 11 else "*" * len(api_key)
+            print_success(f"{service_name} API key set: {masked}")
+        else:
+            print_error(f"API key is required for {service_name} backend")
+
     def cmd_go(self):
         if not self.idea_file:
             if not self.prompt_for_idea():

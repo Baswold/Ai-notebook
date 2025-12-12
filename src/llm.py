@@ -492,6 +492,98 @@ class MistralBackend(LLMBackend):
             )
 
 
+class AnthropicBackend(LLMBackend):
+    """
+    Anthropic Claude API backend.
+    Uses the official Anthropic Python SDK.
+
+    Setup:
+        1. Get API key from https://console.anthropic.com/
+        2. Set environment variable: export ANTHROPIC_API_KEY="your-key"
+        3. Use model: claude-3-5-sonnet-20241022 (recommended for coding)
+
+    Available models:
+        - claude-3-5-sonnet-20241022: Best for complex tasks (recommended)
+        - claude-3-opus-20250219: Most capable for difficult tasks
+        - claude-3-haiku-20240307: Fast, lightweight
+    """
+    def __init__(self, model: str = "claude-3-5-sonnet-20241022"):
+        import os
+        from anthropic import Anthropic
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "ANTHROPIC_API_KEY environment variable not set.\n"
+                "Get your API key from https://console.anthropic.com/\n"
+                "Then run: export ANTHROPIC_API_KEY='your-key'"
+            )
+
+        self.model = model
+        self.client = Anthropic(api_key=api_key)
+
+    def get_info(self) -> str:
+        return f"Anthropic ({self.model})"
+
+    def supports_tools(self) -> bool:
+        return True
+
+    def generate(
+        self,
+        messages: List[Dict[str, str]],
+        tools: Optional[List[Dict]] = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+    ) -> LLMResponse:
+        try:
+            # Convert tool definitions to Anthropic format if needed
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+
+            if tools:
+                kwargs["tools"] = tools
+
+            response = self.client.messages.create(**kwargs)
+
+            # Extract content and tool calls
+            content = ""
+            tool_calls_list = []
+
+            for block in response.content:
+                if hasattr(block, "text"):
+                    content = block.text
+                elif block.type == "tool_use":
+                    tool_calls_list.append({
+                        "id": block.id,
+                        "type": "function",
+                        "function": {
+                            "name": block.name,
+                            "arguments": json.dumps(block.input)
+                        }
+                    })
+
+            return LLMResponse(
+                content=content,
+                tool_calls=tool_calls_list,
+                usage=TokenUsage(
+                    prompt_tokens=response.usage.input_tokens if response.usage else 0,
+                    completion_tokens=response.usage.output_tokens if response.usage else 0,
+                    total_tokens=(response.usage.input_tokens + response.usage.output_tokens) if response.usage else 0
+                ),
+                finish_reason=response.stop_reason or "stop"
+            )
+        except Exception as e:
+            return LLMResponse(
+                content=f"Error calling Anthropic: {str(e)}",
+                usage=TokenUsage(),
+                finish_reason="error"
+            )
+
+
 class OpenAICompatibleBackend(LLMBackend):
     """
     Generic OpenAI-compatible API backend.
@@ -575,6 +667,8 @@ BACKEND_ALIASES = {
     "mlx": "mlx",
     "openai": "openai",
     "gpt": "openai",
+    "anthropic": "anthropic",
+    "claude": "anthropic",
     "mistral": "mistral",
     "devstral": "mistral",
     "http": "http",
@@ -592,6 +686,7 @@ def create_backend(config) -> LLMBackend:
     Create an LLM backend based on configuration.
 
     Supported backends:
+        - anthropic: Anthropic Claude API (uses ANTHROPIC_API_KEY)
         - mistral: Mistral AI API (uses MISTRAL_API_KEY)
         - openai: OpenAI API (uses Replit AI Integrations or OPENAI_API_KEY)
         - ollama: Ollama local server (default: localhost:11434)
@@ -602,7 +697,10 @@ def create_backend(config) -> LLMBackend:
     backend_type = config.model.backend.lower()
     backend_type = BACKEND_ALIASES.get(backend_type, backend_type)
 
-    if backend_type == "mistral":
+    if backend_type == "anthropic":
+        return AnthropicBackend(model=config.model.name)
+
+    elif backend_type == "mistral":
         return MistralBackend(model=config.model.name)
 
     elif backend_type == "ollama":
@@ -630,7 +728,7 @@ def create_backend(config) -> LLMBackend:
     else:
         raise ValueError(
             f"Unknown backend: {backend_type}\n"
-            f"Supported: mistral, openai, ollama, lmstudio, mlx, http"
+            f"Supported: anthropic, mistral, openai, ollama, lmstudio, mlx, http"
         )
 
 
@@ -640,7 +738,15 @@ def list_backends() -> str:
 Available LLM Backends:
 =======================
 
-1. Mistral (RECOMMENDED - fast, affordable coding models)
+1. Anthropic Claude (best for complex tasks)
+   Backend: anthropic
+   Models: claude-3-5-sonnet-20241022 (recommended), claude-3-opus-20250219, claude-3-haiku-20240307
+   Setup:
+     1. Get API key from https://console.anthropic.com/
+     2. export ANTHROPIC_API_KEY="your-key"
+     3. Set in config: backend=anthropic, name=claude-3-5-sonnet-20241022
+
+2. Mistral (fast, affordable coding models)
    Backend: mistral
    Models: devstral-small-2505 (24B, recommended), mistral-large-latest, etc.
    Setup:
@@ -648,12 +754,12 @@ Available LLM Backends:
      2. export MISTRAL_API_KEY="your-key"
      3. Set in config: backend=mistral, name=devstral-small-2505
 
-2. OpenAI (great for Claude Code, Replit AI Integrations)
+3. OpenAI (great for Claude Code, Replit AI Integrations)
    Backend: openai
    Models: gpt-4o, gpt-4o-mini, gpt-4.1, o3-mini, etc.
    Uses Replit AI Integrations (no API key needed!)
 
-3. Ollama (local LLM server)
+4. Ollama (local LLM server)
    Backend: ollama
    Default URL: http://localhost:11434
    Setup:
@@ -661,7 +767,7 @@ Available LLM Backends:
      ollama pull devstral
      ollama serve
 
-4. LM Studio (great GUI, easy model management)
+5. LM Studio (great GUI, easy model management)
    Backend: lmstudio
    Default URL: http://localhost:1234
    Setup:
@@ -669,12 +775,12 @@ Available LLM Backends:
      2. Load a coding model (Devstral, CodeLlama, etc.)
      3. Start local server
 
-5. MLX (native Apple Silicon, fastest on Mac)
+6. MLX (native Apple Silicon, fastest on Mac)
    Backend: mlx
    Requires: pip install mlx-lm
    Note: Model downloaded automatically on first run
 
-6. HTTP (any OpenAI-compatible API)
+7. HTTP (any OpenAI-compatible API)
    Backend: http
    Requires: base_url in config
    Works with: vLLM, text-generation-inference, etc.
