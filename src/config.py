@@ -10,6 +10,7 @@ class ModelConfig(BaseModel):
     max_tokens: int = 4096
     temperature: float = 0.7
     base_url: Optional[str] = None
+    openai_api_key: Optional[str] = None
 
 
 class LimitsConfig(BaseModel):
