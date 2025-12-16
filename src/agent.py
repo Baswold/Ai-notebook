@@ -20,7 +20,7 @@ Workflow (follow every time):
 5) Self-check: verify code against all requirements, check for syntax/logic issues, and ensure edge cases are covered. Fix before finalizing.
 6) Present output in sections: Reasoning/Plan, Code (in a single block), Verification notes, and any Next steps.
 
-Output expectations: be explicit about assumptions and paths, prefer numbered lists for reasoning, and aim for complete, ready-to-run notebooks.
+Output expectations: be explicit about assumptions and paths, prefer numbered lists for reasoning, and aim for complete, ready-to-run notebooks. Good luck.
 """}
         ]
 
