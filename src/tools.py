@@ -8,7 +8,7 @@ import subprocess
 import json
 from .config import GLOBAL_CONFIG
 
-def ensure_extension(filename):
+def ensure_notebook_extension(filename):
     if not filename.endswith('.ipynb'):
         return filename + '.ipynb'
     return filename
@@ -26,7 +26,6 @@ def list_md_files():
     return "Markdown files found:\n" + "\n".join(files)
 
 def read_md_files(filename):
-    filename = ensure_extension(filename)
     if not os.path.exists(filename):
         return f"Error: File {filename} does not exist."
     with open(filename, 'r') as f:
@@ -34,7 +33,7 @@ def read_md_files(filename):
 
 
 def create_notebook(filename):
-    filename = ensure_extension(filename)
+    filename = ensure_notebook_extension(filename)
     if os.path.exists(filename):
         return f"Error: File {filename} already exists."
     
@@ -44,7 +43,7 @@ def create_notebook(filename):
     return f"Notebook {filename} created successfully."
 
 def add_cell(filename, content, cell_type="code"):
-    filename = ensure_extension(filename)
+    filename = ensure_notebook_extension(filename)
     if not os.path.exists(filename):
         return f"Error: File {filename} does not exist."
     
@@ -63,7 +62,7 @@ def add_multiple_cells(filename, cells_data):
     """
     cells_data: list of dicts with keys 'content' and 'type' (optional, default code)
     """
-    filename = ensure_extension(filename)
+    filename = ensure_notebook_extension(filename)
     if not os.path.exists(filename):
         return f"Error: File {filename} does not exist."
     
@@ -84,7 +83,7 @@ def add_multiple_cells(filename, cells_data):
     return f"Added {count} cells to {filename}."
 
 def edit_notebook(filename, cell_index, content):
-    filename = ensure_extension(filename)
+    filename = ensure_notebook_extension(filename)
     if not os.path.exists(filename):
         return f"Error: File {filename} does not exist."
     
@@ -98,7 +97,7 @@ def edit_notebook(filename, cell_index, content):
     return f"Updated cell {cell_index} in {filename}."
 
 def read_notebook(filename, limit=None):
-    filename = ensure_extension(filename)
+    filename = ensure_notebook_extension(filename)
     if not os.path.exists(filename):
         return f"Error: File {filename} does not exist."
     
@@ -129,7 +128,7 @@ def run_notebook(filename):
     if GLOBAL_CONFIG.mode != "run":
          return "Action Prevented: Current mode is 'Build'. Execution is disabled. Switch to 'Run' mode to execute."
          
-    filename = ensure_extension(filename)
+    filename = ensure_notebook_extension(filename)
     if not os.path.exists(filename):
         return f"Error: File {filename} does not exist."
         
