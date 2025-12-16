@@ -26,7 +26,8 @@ def list_md_files():
     return "Markdown files found:\n" + "\n".join(files)
 
 def read_md_files(filename):
-    filename = ensure_extension(filename)
+    if not filename.endswith('.md'):
+        filename = filename + '.md'
     if not os.path.exists(filename):
         return f"Error: File {filename} does not exist."
     with open(filename, 'r') as f:
