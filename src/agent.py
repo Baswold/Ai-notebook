@@ -109,3 +109,5 @@ class Agent:
 
     def clear_history(self):
         self.history = [self.history[0]]
+
+'''added to push. this serves no perpose!'''
