@@ -1,0 +1,7 @@
+prompt_toolkit
+nbformat
+nbclient
+httpx
+rich
+psutil
+ipykernel
