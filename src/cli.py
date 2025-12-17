@@ -123,29 +123,38 @@ def copy_idea_to_workspace(idea_file: Path, workspace: Path):
     return dest
 
 
-def print_cycle_result(result: CycleResult, phase: str):
+def print_cycle_result(result: CycleResult, phase: str, state=None):
     console.print()
-    
+
     phase_color = COLORS["cyan"] if phase == "implementation" else COLORS["purple"]
-    
+
     header = Text()
     header.append(f"Cycle {result.cycle_number}", style="bold white")
     header.append(f"  ", style="")
     header.append(f"[{phase}]", style=phase_color)
-    
+
     content = Text()
     content.append("Completeness  ")
     content.append_text(progress_bar(result.completeness_score))
     content.append(f"\nDuration      {result.duration_seconds:.1f}s")
-    
+
+    # Show cycle-specific metrics if available, otherwise show cumulative from state
     if result.agent1_response:
         tokens = result.agent1_response.usage.total_tokens
-        iters = result.agent1_response.iterations
-        content.append(f"\nImplementer   {tokens:,} tokens, {iters} tool calls")
-    
+        tool_calls = len(result.agent1_response.tool_calls_made)
+        content.append(f"\nImplementer   {tokens:,} tokens, {tool_calls} tool calls")
+    elif state:
+        # Show cumulative metrics when cycle-specific ones aren't available
+        tokens = state.total_agent1_usage.total_tokens
+        content.append(f"\nImplementer   {tokens:,} tokens (cumulative)")
+
     if result.agent2_review:
         tokens = result.agent2_review.usage.total_tokens
         content.append(f"\nReviewer      {tokens:,} tokens")
+    elif state:
+        # Show cumulative metrics when cycle-specific ones aren't available
+        tokens = state.total_agent2_usage.total_tokens
+        content.append(f"\nReviewer      {tokens:,} tokens (cumulative)")
     
     border_color = COLORS["success"] if result.completeness_score >= 90 else COLORS["primary"]
     
@@ -497,7 +506,8 @@ Start now."""
         
         def on_cycle(result: CycleResult):
             phase = self.orchestrator.state.phase if self.orchestrator else "implementation"
-            print_cycle_result(result, phase)
+            state = self.orchestrator.state if self.orchestrator else None
+            print_cycle_result(result, phase, state)
         
         def on_status(status: str):
             print_info(status)
