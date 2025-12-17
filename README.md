@@ -16,7 +16,7 @@ Almanac is a premium terminal-based agent designed to autonomously create, edit,
     -   Boxed input area with "Gemini CLI" styling.
     -   Persistent status footer (Mode, Backend, Model, Memory Usage).
     -   Rich markdown and syntax highlighting.
--   **Backend Agnostic**: Supports **Ollama**, **LM Studio**, **Mistral API**, **Claude Code CLI**, and **OpenAI Codex CLI**.
+-   **Backend Agnostic**: Supports **Ollama**, **LM Studio**, **Mistral API**, **Claude Code CLI**, **OpenAI Codex CLI**, and **Google Gemini CLI**.
 
 ## Quick Start
 
@@ -34,7 +34,7 @@ Almanac is a premium terminal-based agent designed to autonomously create, edit,
 
 -   `/mode [build|run]`: Switch between Build (default) and Run modes.
 -   `/model [name]`: Change the underlying LLM (default: `labs-devstral-small-2512`).
--   `/backend [ollama|lm_studio|mistral_api|claude_code|codex]`: Switch the LLM provider.
+-   `/backend [ollama|lm_studio|mistral_api|claude_code|codex|gemini]`: Switch the LLM provider.
 -   `/clear`: Clear the screen and history.
 -   `/quit`: Exit the agent (or double-press `Ctrl+C`).
 
@@ -96,11 +96,27 @@ Almanac now supports **Claude Code CLI** and **OpenAI Codex CLI** as backends. T
     /backend codex
     ```
 
+#### Google Gemini CLI Backend
+
+1.  **Install Gemini CLI**:
+    ```bash
+    npm install -g @google/gemini-cli
+    ```
+
+2.  **Authenticate with Google AI Studio**:
+    Follow the Gemini CLI authentication flow (typically opens browser).
+
+3.  **Switch to Gemini backend in Almanac**:
+    ```bash
+    /backend gemini
+    ```
+
 ### Configuration
 
-Both CLI backends come with sensible defaults:
+All CLI backends come with sensible defaults:
 
 -   **Claude Code**: Uses `claude-sonnet-4-5` model with tools: `Read,Write,Edit,Bash,Glob,Grep`
 -   **Codex**: Uses `gpt-5-codex` model with `--full-auto` and `--sandbox danger-full-access` for full automation.
+-   **Gemini**: Uses `gemini-pro-2.5` model with `--yolo` mode enabled for autonomous operation.
 
 You can customize these in `src/config.py` if needed.

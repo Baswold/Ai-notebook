@@ -185,6 +185,172 @@ class ClaudeCodeCLIBackend(LLMBackend):
             }]
         }
 
+class GeminiCLIBackend(LLMBackend):
+    """
+    Backend that uses Google Gemini CLI in headless mode.
+
+    WARNING: This backend uses your Google AI Studio / Gemini API quota.
+    It will consume usage from your quota VERY QUICKLY during automated operations.
+    Make sure you understand the implications before using this in CI/CD or automated workflows.
+    """
+    def __init__(self, config_dict):
+        self.yolo_mode = config_dict.get("yolo_mode", True)
+        self.model = config_dict.get("default_model", "gemini-pro-2.5")
+
+    async def chat_completion(self, messages, tools=None):
+        """
+        Execute Google Gemini CLI with the conversation history.
+        Returns response in OpenAI-compatible format.
+        """
+        try:
+            # Build the prompt from messages
+            prompt = self._build_prompt(messages, tools)
+
+            # Build Gemini CLI command
+            cmd = ["gemini", "-p", prompt, "--model", self.model, "--output-format", "json"]
+
+            if self.yolo_mode:
+                cmd.append("--yolo")
+
+            # Execute Gemini CLI
+            result = await asyncio.to_thread(
+                subprocess.run,
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+
+            if result.returncode != 0:
+                return {
+                    "error": f"Gemini CLI failed with exit code {result.returncode}",
+                    "details": result.stderr
+                }
+
+            # Parse output and convert to OpenAI format
+            return self._parse_gemini_output(result.stdout, tools)
+
+        except subprocess.TimeoutExpired:
+            return {"error": "Gemini CLI timed out after 120 seconds"}
+        except FileNotFoundError:
+            return {
+                "error": "Gemini CLI not found",
+                "details": "Please install Gemini CLI: npm install -g @google/gemini-cli"
+            }
+        except Exception as e:
+            return {"error": f"Gemini CLI error: {str(e)}"}
+
+    def _build_prompt(self, messages, tools=None):
+        """Build a comprehensive prompt from the message history."""
+        parts = []
+
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+
+            if role == "system":
+                parts.append(f"SYSTEM INSTRUCTIONS:\n{content}\n")
+            elif role == "user":
+                parts.append(f"USER REQUEST:\n{content}\n")
+            elif role == "assistant":
+                if msg.get("tool_calls"):
+                    # Format tool calls
+                    tool_calls_str = "\n".join([
+                        f"- {tc['function']['name']}({tc['function']['arguments']})"
+                        for tc in msg["tool_calls"]
+                    ])
+                    parts.append(f"PREVIOUS ACTIONS:\n{tool_calls_str}\n")
+                if content:
+                    parts.append(f"ASSISTANT:\n{content}\n")
+            elif role == "tool":
+                parts.append(f"TOOL RESULT:\n{content}\n")
+
+        # Add tool definitions if provided
+        if tools:
+            tool_descriptions = "\n".join([
+                f"- {tool['function']['name']}: {tool['function']['description']}"
+                for tool in tools
+            ])
+            parts.append(f"\nAVAILABLE TOOLS:\n{tool_descriptions}\n")
+            parts.append("\nIMPORTANT: You must respond with tool calls in this JSON format:")
+            parts.append('{"tool_calls": [{"function": {"name": "tool_name", "arguments": "{...}"}}]}')
+
+        return "\n".join(parts)
+
+    def _parse_gemini_output(self, output, tools=None):
+        """Parse Gemini CLI JSON output into OpenAI format."""
+        try:
+            # Gemini CLI with --output-format json returns JSON
+            data = json.loads(output)
+
+            # Extract content from Gemini response
+            content = ""
+            if isinstance(data, dict):
+                # Try different possible keys
+                content = data.get("text") or data.get("content") or data.get("response") or str(data)
+            else:
+                content = str(data)
+
+            # Try to detect tool calls in the response
+            tool_calls = None
+            if tools and '{"tool_calls":' in content:
+                try:
+                    import re
+                    json_match = re.search(r'\{.*"tool_calls".*\}', content, re.DOTALL)
+                    if json_match:
+                        parsed = json.loads(json_match.group(0))
+                        if "tool_calls" in parsed:
+                            # Convert to OpenAI format
+                            tool_calls = []
+                            for idx, tc in enumerate(parsed["tool_calls"]):
+                                tool_calls.append({
+                                    "id": f"call_{idx}",
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc["function"]["name"],
+                                        "arguments": tc["function"]["arguments"]
+                                    }
+                                })
+                            # Remove the JSON from content
+                            content = content.replace(json_match.group(0), "").strip()
+                except json.JSONDecodeError:
+                    pass
+
+            return {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": content if content else None,
+                        "tool_calls": tool_calls
+                    },
+                    "finish_reason": "stop"
+                }]
+            }
+        except json.JSONDecodeError:
+            # Fallback: return raw output
+            return {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": output.strip(),
+                        "tool_calls": None
+                    },
+                    "finish_reason": "stop"
+                }]
+            }
+        except Exception as e:
+            # Fallback: return raw output
+            return {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": output.strip(),
+                        "tool_calls": None
+                    },
+                    "finish_reason": "stop"
+                }]
+            }
+
 class CodexCLIBackend(LLMBackend):
     """
     Backend that uses OpenAI Codex CLI in headless mode.
@@ -361,5 +527,7 @@ def get_backend():
         return ClaudeCodeCLIBackend(config)
     elif backend_type == "codex_cli":
         return CodexCLIBackend(config)
+    elif backend_type == "gemini_cli":
+        return GeminiCLIBackend(config)
     else:
         raise ValueError(f"Unknown backend type: {backend_type}")

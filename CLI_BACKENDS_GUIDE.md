@@ -1,10 +1,10 @@
 # CLI Backends Guide
 
-This guide provides detailed information about using Claude Code CLI and OpenAI Codex CLI as backends for ALMANAC.
+This guide provides detailed information about using Claude Code CLI, OpenAI Codex CLI, and Google Gemini CLI as backends for ALMANAC.
 
 ## Overview
 
-ALMANAC now supports using Claude Code and Codex CLIs as backends, allowing you to leverage your Claude Pro/Team or ChatGPT Plus/Pro subscriptions instead of running local models or using APIs directly.
+ALMANAC now supports using Claude Code, Codex, and Gemini CLIs as backends, allowing you to leverage your Claude Pro/Team or ChatGPT Plus/Pro subscriptions instead of running local models or using APIs directly.
 
 ## ⚠️ Important Warnings
 
@@ -143,6 +143,17 @@ Both CLI backends come pre-configured with sensible defaults in `src/config.py`:
 #### Codex
 ```python
 "codex": {
+
+#### Gemini
+```python
+"gemini": {
+    "type": "gemini_cli",
+    "default_model": "gemini-pro-2.5",
+    "yolo_mode": True,
+}
+```
+```python
+"codex": {
     "type": "codex_cli",
     "default_model": "gpt-5-codex",
     "full_auto": True,
@@ -168,6 +179,52 @@ You can customize these settings by editing `src/config.py`. For example:
 ```python
 "sandbox": "read-only"  # More restrictive mode
 ```
+
+
+### Google Gemini CLI Backend
+
+#### 1. Install Gemini CLI
+
+```bash
+npm install -g @google/gemini-cli
+```
+
+Verify installation:
+```bash
+gemini --version
+```
+
+#### 2. Authenticate
+
+The Gemini CLI will prompt you to authenticate when you first run it:
+
+```bash
+gemini
+```
+
+This will typically open your browser for Google authentication. Follow the prompts to log in with your Google account that has access to Google AI Studio / Gemini API.
+
+#### 3. Verify Authentication
+
+```bash
+gemini -p "Hello, are you working?"
+```
+
+You should get a response from Gemini.
+
+#### 4. Use in ALMANAC
+
+Start ALMANAC:
+```bash
+python main.py
+```
+
+Switch to Gemini backend:
+```
+/backend gemini
+```
+
+You'll see a warning about usage consumption. Type your request normally and ALMANAC will use Gemini CLI for reasoning with YOLO mode enabled (automatic approval of all actions).
 
 ## How It Works
 
@@ -330,6 +387,7 @@ python main.py
 | **Mistral API** | Production API integration | Fast API, good pricing | Costs money, requires API key |
 | **Claude Code CLI** | Complex one-off tasks | Frontier reasoning, no GPU needed | Consumes subscription quickly |
 | **Codex CLI** | Complex coding tasks | Latest GPT models, strong at code | Consumes subscription quickly |
+| **Gemini CLI** | Google ecosystem integration | Gemini 2.5 Pro, YOLO mode, fast | Consumes quota quickly, requires Google account |
 
 ## FAQ
 
