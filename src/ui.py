@@ -461,6 +461,10 @@ class AlmanacUI:
             if args:
                  if GLOBAL_CONFIG.set_backend(args[0]):
                     self.print_rich(f"Backend switched to: {args[0]}\n")
+                    # Display usage warning if present
+                    backend_config = GLOBAL_CONFIG.get_active_backend_config()
+                    if "usage_warning" in backend_config:
+                        self.print_rich(backend_config["usage_warning"] + "\n")
             else:
                 # Interactive Menu
                 opts = [(k, k) for k in GLOBAL_CONFIG.BACKENDS.keys()]
@@ -475,22 +479,13 @@ class AlmanacUI:
                  GLOBAL_CONFIG.set_model(args[0])
                  self.print_rich(f"Model set to: {args[0]}\n")
              else:
-                 # Provide some common defaults + current
-                 defaults = [
-                     ("labs-devstral-small-2512", "Devstral Small 2"),
-                     ("mistral-small-latest", "Mistral Small"),
-                     ("llama3", "Llama 3"),
-                 ]
-                 # Ensure current is in list if not default
-                 current = GLOBAL_CONFIG.active_model
-                 if not any(d[0] == current for d in defaults):
-                     defaults.insert(0, (current, current + " (Current)"))
-                     
+                 # Get backend-specific model options
+                 model_options = GLOBAL_CONFIG.get_model_options_for_backend()
                  self.show_menu(
-                    title="Select Model",
-                    options=defaults,
+                    title=f"Select Model ({GLOBAL_CONFIG.active_backend})",
+                    options=model_options,
                     callback=lambda val: asyncio.create_task(self._set_model_cb(val))
-                )
+                 )
 
         elif cmd == "/setkey":
             if args:
@@ -518,6 +513,10 @@ class AlmanacUI:
     async def _set_backend_cb(self, val):
         if GLOBAL_CONFIG.set_backend(val):
             self.print_rich(f"Backend switched to: {val}\n")
+            # Display usage warning if present
+            backend_config = GLOBAL_CONFIG.get_active_backend_config()
+            if "usage_warning" in backend_config:
+                self.print_rich(backend_config["usage_warning"] + "\n")
             
     async def _set_model_cb(self, val):
         GLOBAL_CONFIG.set_model(val)
