@@ -27,7 +27,7 @@ class Config:
     }
 
     def __init__(self):
-        self.active_backend = "mistral_api" # Default backend
+        self.active_backend = "ollama" # Default backend (changed from mistral_api)
         self.active_model = self.BACKENDS["ollama"]["default_model"]
         self.mode = "build" # 'build' or 'run'
 

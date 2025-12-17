@@ -38,14 +38,18 @@ class AlmanacUI:
 
         self.app = None
         self.is_processing = False
-        self.input_queue = [] 
-        
+        self.input_queue = []
+
         # Scroll State
         self.autoscroll = True
-        
+
         # Exit Logic State
         self.last_exit_attempt = 0
         self.notification_text = ""
+
+        # Max iterations state
+        self.waiting_for_continuation = False
+        self.current_max_steps = 50
 
         # Key bindings
         self.kb = KeyBindings()
@@ -315,7 +319,7 @@ class AlmanacUI:
     async def handle_input(self, text):
         self.is_processing = True
         spinner = asyncio.create_task(self.spinner_task())
-        
+
         # Handle commands
         if text.startswith("/"):
             await self.handle_slash_command(text)
@@ -323,18 +327,70 @@ class AlmanacUI:
             await spinner
             return
 
+        # Check if waiting for continuation response
+        if self.waiting_for_continuation:
+            self.waiting_for_continuation = False
+            if text.lower().strip() in ["yes", "y"]:
+                self.print_rich(f"\n> {text}\n\n")
+                self.print_rich("Extending iterations by 50 and continuing...\n\n")
+                self.agent.extend_max_steps(50)
+                # Continue from where we left off
+                try:
+                    async for event in self.agent.step_gen("", continue_from_previous=True):
+                        event_type = event["type"]
+                        content = event.get("content", "")
+
+                        if event_type == "status":
+                            pass
+                        elif event_type == "thought":
+                            self.print_rich(f"\nThinking:\n{content}\n")
+                        elif event_type == "tool_call":
+                            self.print_rich(f"\nCalling Tool: {event['name']}\n")
+                            args_str = str(event['arguments'])
+                            if len(args_str) > 500:
+                                args_str = args_str[:500] + "... (truncated)"
+                            self.print_rich(f"{args_str}\n")
+                        elif event_type == "tool_result":
+                            short_res = str(event["result"])[:200] + "..." if len(str(event['result'])) > 200 else str(event['result'])
+                            self.print_rich(f"Result: {short_res}\n")
+                        elif event_type == "message":
+                            self.print_rich(f"\nAlmanac:\n{content}\n")
+                        elif event_type == "error":
+                            self.print_rich(f"Error: {content}\n")
+                        elif event_type == "max_iterations":
+                            self.print_rich(f"\n{content}\n")
+                            self.print_rich("Type 'yes' and press Enter to add 50 more iterations, or anything else to stop.\n")
+                            self.waiting_for_continuation = True
+                            self.current_max_steps = event.get("current_steps", 50)
+
+                        self.app.invalidate()
+                finally:
+                    self.is_processing = False
+                    await spinner
+                    # Process next message in queue if any
+                    if self.input_queue:
+                        next_text = self.input_queue.pop(0)
+                        asyncio.create_task(self.handle_input(next_text))
+                return
+            else:
+                self.print_rich(f"\n> {text}\n\n")
+                self.print_rich("Stopping. You can start a new task now.\n")
+                self.is_processing = False
+                await spinner
+                return
+
         # Echo user input
-        self.print_rich(f"\n> {text}\n\n") 
+        self.print_rich(f"\n> {text}\n\n")
 
         self.notification_text = ""
-        
+
         try:
             async for event in self.agent.step_gen(text):
                 event_type = event["type"]
                 content = event.get("content", "")
 
                 if event_type == "status":
-                    pass 
+                    pass
                 elif event_type == "thought":
                     self.print_rich(f"\nThinking:\n{content}\n")
                 elif event_type == "tool_call":
@@ -350,12 +406,17 @@ class AlmanacUI:
                     self.print_rich(f"\nAlmanac:\n{content}\n")
                 elif event_type == "error":
                     self.print_rich(f"Error: {content}\n")
-                
+                elif event_type == "max_iterations":
+                    self.print_rich(f"\n{content}\n")
+                    self.print_rich("Type 'yes' and press Enter to add 50 more iterations, or anything else to stop.\n")
+                    self.waiting_for_continuation = True
+                    self.current_max_steps = event.get("current_steps", 50)
+
                 self.app.invalidate()
         finally:
             self.is_processing = False
             await spinner
-            
+
             # Process next message in queue if any
             if self.input_queue:
                 next_text = self.input_queue.pop(0)
