@@ -461,6 +461,10 @@ class AlmanacUI:
             if args:
                  if GLOBAL_CONFIG.set_backend(args[0]):
                     self.print_rich(f"Backend switched to: {args[0]}\n")
+                    # Display usage warning if present
+                    backend_config = GLOBAL_CONFIG.get_active_backend_config()
+                    if "usage_warning" in backend_config:
+                        self.print_rich(backend_config["usage_warning"] + "\n")
             else:
                 # Interactive Menu
                 opts = [(k, k) for k in GLOBAL_CONFIG.BACKENDS.keys()]
@@ -518,6 +522,10 @@ class AlmanacUI:
     async def _set_backend_cb(self, val):
         if GLOBAL_CONFIG.set_backend(val):
             self.print_rich(f"Backend switched to: {val}\n")
+            # Display usage warning if present
+            backend_config = GLOBAL_CONFIG.get_active_backend_config()
+            if "usage_warning" in backend_config:
+                self.print_rich(backend_config["usage_warning"] + "\n")
             
     async def _set_model_cb(self, val):
         GLOBAL_CONFIG.set_model(val)

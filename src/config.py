@@ -23,6 +23,40 @@ class Config:
             "base_url": "http://localhost:1234/v1",
             "api_key": "lm-studio",
             "default_model": "local-model" # LM Studio often ignores model name or uses loaded one
+        },
+        "claude_code": {
+            "type": "claude_code_cli",
+            "default_model": "claude-sonnet-4-5",
+            "allowed_tools": "Read,Write,Edit,Bash,Glob,Grep",
+            "skip_permissions": True,
+            "usage_warning": """
+⚠️  WARNING: CLAUDE CODE CLI BACKEND ⚠️
+This backend uses your Claude Pro/Team subscription through the Claude Code CLI.
+It will consume usage from your subscription VERY QUICKLY during automated operations.
+Make sure you understand the implications before using this in CI/CD or automated workflows.
+
+Requirements:
+- Claude Code CLI must be installed: npm install -g @anthropic/claude-code
+- You must be logged in with a Claude Pro/Team account: claude login
+- This backend is recommended ONLY for CLI usage, not API calls
+"""
+        },
+        "codex": {
+            "type": "codex_cli",
+            "default_model": "gpt-5-codex",
+            "full_auto": True,
+            "sandbox": "danger-full-access",
+            "usage_warning": """
+⚠️  WARNING: OPENAI CODEX CLI BACKEND ⚠️
+This backend uses your ChatGPT Plus/Pro subscription through the Codex CLI.
+It will consume usage from your subscription VERY QUICKLY during automated operations.
+Make sure you understand the implications before using this in CI/CD or automated workflows.
+
+Requirements:
+- Codex CLI must be installed: npm install -g @openai/codex
+- You must be logged in with ChatGPT Plus/Pro/Business account
+- This backend is recommended ONLY for CLI usage, not API calls
+"""
         }
     }
 
