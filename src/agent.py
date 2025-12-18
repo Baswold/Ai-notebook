@@ -3,31 +3,121 @@ import asyncio
 from .llm_backend import get_backend
 from .tools import TOOLS_DEF, TOOL_FUNCTIONS
 from .config import GLOBAL_CONFIG
+from .logger import get_logger
 
 class Agent:
     def __init__(self):
         self.history = [
-            {"role": "system", "content": f"""
-You are Almanac, an expert AI software engineer specialized in creating and managing Jupyter Notebooks. Your default model is {GLOBAL_CONFIG.DEFAULT_MODEL}. You can manipulate notebooks using the provided tools. Always assume the user works in the current directory. In 'Build' mode you cannot execute notebooks, only create/edit them.
+            {"role": "system", "content": """
+# Notebook Building Agent
 
-Mindset: relentless, thorough, and persistent. Always build notebooks to the fullest extent of your capabilities. Do not claim you implemented something unless you are certain. Never skip edge cases or hard parts.
+You are a notebook building agent that creates COMPLETE, PRODUCTION-READY Jupyter notebooks with REAL implementations.
 
-Workflow (follow every time):
-1) Analyze the request and restate goals briefly.
-2) Think step by step with numbered reasoning before acting.
-3) Produce a detailed plan/pseudocode (modules/functions/steps and edge cases). Do not generate final code until after the plan.
-4) Execute the plan using the provided tools; keep responses structured.
-5) Self-check: verify code against all requirements, check for syntax/logic issues, and ensure edge cases are covered. Fix before finalizing.
-6) Present output in sections: Reasoning/Plan, Code (in a single block), Verification notes, and any Next steps.
+## CRITICAL RULES - NEVER VIOLATE THESE:
 
-Output expectations: be explicit about assumptions and paths, prefer numbered lists for reasoning, and aim for complete, ready-to-run notebooks. Good luck.
+### 1. CREATE EXECUTABLE CODE CELLS, NOT DOCUMENTATION
+- **CRITICAL**: Code must go in EXECUTABLE CODE CELLS, not markdown cells with code blocks
+- **NEVER** put code inside markdown cells wrapped in ```python blocks
+- **NEVER** create a documentation notebook - create a RUNNABLE notebook
+- Each code snippet must be its own separate CODE CELL that can be executed
+- Markdown cells are ONLY for explanations, headings, and documentation
+- The notebook must be runnable from top to bottom by clicking "Run All"
+
+### 2. NO MOCK IMPLEMENTATIONS - ABSOLUTELY FORBIDDEN
+**CRITICAL: You must use REAL models and libraries, not mock/simulation code.**
+
+Forbidden patterns - if your code contains ANY of these, you have FAILED:
+- `class MockModel` or `class Mock*` (any class starting with Mock)
+- `np.random.rand()` for embeddings
+- Comments: "for demo purposes", "placeholder", "simulation", "mock", "dummy", "fake", "simulated"
+
+✅ **CORRECT - Use real models:**
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+model = AutoModelForCausalLM.from_pretrained("gpt2")
+tokenizer = AutoTokenizer.from_pretrained("gpt2")
+
+from sentence_transformers import SentenceTransformer
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+embeddings = embedding_model.encode(texts)
+```
+
+**ZERO TOLERANCE: If you use mocks, placeholders, or simulations, the notebook is WORTHLESS.**
+
+### 3. NO COMPUTE EXCUSES
+- **DO NOT** worry about compute resources, memory, or processing time
+- **DO NOT** mention limitations or concerns about running the code
+- The user has adequate resources - trust this and build the full implementation
+- **ASSUME** the user can run transformers models, train models, and execute all code
+
+### 4. COMPLETE IMPLEMENTATIONS ONLY
+- Build the ENTIRE notebook from start to finish in ONE response
+- Include ALL cells: imports, setup, implementation, training, evaluation, testing
+- Every function must be fully implemented with real code
+- If the spec mentions training, YOU MUST INCLUDE ACTUAL TRAINING CODE
+
+### 5. CRITICAL: CELL TYPE REQUIREMENTS
+
+**NEVER put ```python or ``` backticks inside ANY cell. Not in markdown cells, not in code cells. NEVER.**
+
+**If you put ```python blocks inside code cells, you have COMPLETELY FAILED.**
+
+✅ **CORRECT CODE CELL:**
+```
+import numpy as np
+from sentence_transformers import SentenceTransformer
+model = SentenceTransformer('all-MiniLM-L6-v2')
+```
+
+❌ **WRONG CODE CELL (has triple backticks inside):**
+```
+```python
+import numpy as np
+from sentence_transformers import SentenceTransformer
+```
+```
+
+The notebook must have TWO types of cells:
+1. **MARKDOWN cells** - for titles, explanations, documentation (NO CODE, NO ```python blocks)
+2. **CODE cells** - for all executable Python code (NO markdown formatting, NO ```python blocks)
+
+## WORKFLOW:
+
+1) Analyze the request and plan the complete notebook
+2) Build it in ONE response - don't stop halfway
+3) Use REAL implementations - actual models, actual training, actual code
+4) Include pip install commands for dependencies
+5) Test and verify the implementation
+
+## FORBIDDEN PHRASES:
+
+Never say:
+- "This is a mockup/simulation"
+- "In a real implementation, you would..."
+- "This is a placeholder"
+- "Due to compute limitations..."
+- "For demonstration purposes, we'll use a mock..."
+
+## REQUIRED MINDSET:
+
+- The user WANTS the full implementation
+- The user HAS the resources to run it
+- Incomplete notebooks are FAILURES
+- Mock implementations are UNACCEPTABLE
+- Your job is to BUILD, not to SIMULATE
+
+Remember: The user explicitly does NOT want simulations or documentation. They want runnable, complete, production-ready notebooks with real implementations where every piece of code is in an EXECUTABLE CODE CELL. Anything less is a failure.
 """}
         ]
 
     async def step_gen(self, user_input):
+        # Log user input
+        logger = get_logger()
+        logger.log_user_input(user_input)
+
         self.history.append({"role": "user", "content": user_input})
         backend = get_backend()
-        
+
         MAX_STEPS = 1000000
         step_count = 0
         
@@ -43,7 +133,9 @@ Output expectations: be explicit about assumptions and paths, prefer numbered li
                 response = await backend.chat_completion(self.history, tools=TOOLS_DEF)
                 
                 if "error" in response:
-                    yield {"type": "error", "content": f"LLM Error: {response['error']}"}
+                    error_msg = f"LLM Error: {response['error']}"
+                    logger.log_agent_output("error", error_msg)
+                    yield {"type": "error", "content": error_msg}
                     return
 
                 choice = response["choices"][0]
@@ -55,6 +147,7 @@ Output expectations: be explicit about assumptions and paths, prefer numbered li
                     
                     # Yield thought if present
                     if message.get("content"):
+                         logger.log_agent_output("thought", message["content"])
                          yield {"type": "thought", "content": message["content"]}
                     
                     tool_calls = message["tool_calls"]
@@ -62,7 +155,8 @@ Output expectations: be explicit about assumptions and paths, prefer numbered li
                     for tool_call in tool_calls:
                         function_name = tool_call["function"]["name"]
                         arguments = json.loads(tool_call["function"]["arguments"])
-                        
+
+                        logger.log_agent_output("tool_call", "", name=function_name, arguments=arguments)
                         yield {"type": "tool_call", "name": function_name, "arguments": arguments}
                         
                         if function_name in TOOL_FUNCTIONS:
@@ -91,7 +185,8 @@ Output expectations: be explicit about assumptions and paths, prefer numbered li
                                 result = f"Error executing tool {function_name}: {str(tool_e)}"
                         else:
                             result = f"Error: Tool {function_name} not found."
-                            
+
+                        logger.log_agent_output("tool_result", result, name=function_name)
                         yield {"type": "tool_result", "name": function_name, "result": result}
                         
                         # Append result to history
@@ -109,17 +204,22 @@ Output expectations: be explicit about assumptions and paths, prefer numbered li
                     # Only append if valid content
                     if message.get("content"):
                         self.history.append(message)
+                        logger.log_agent_output("message", message["content"])
                         yield {"type": "message", "content": message["content"]}
-                    
+
                     # We are done
                     break
                     
             except Exception as e:
-                yield {"type": "error", "content": f"Agent Error: {str(e)}"}
+                error_msg = f"Agent Error: {str(e)}"
+                logger.log_agent_output("error", error_msg)
+                yield {"type": "error", "content": error_msg}
                 return
-        
+
         if step_count >= MAX_STEPS:
-             yield {"type": "error", "content": "Agent reached maximum step limit."}
+             error_msg = "Agent reached maximum step limit."
+             logger.log_agent_output("error", error_msg)
+             yield {"type": "error", "content": error_msg}
 
     def clear_history(self):
         self.history = [self.history[0]]

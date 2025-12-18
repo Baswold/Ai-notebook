@@ -7,9 +7,9 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.document import Document
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout.containers import HSplit, Window, FloatContainer, Float
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.layout import Layout
-from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import TextArea, Frame, Dialog, RadioList, Button, Label
 from prompt_toolkit.layout.menus import CompletionsMenu
@@ -111,13 +111,14 @@ class AlmanacUI:
         # Slash Command Completer
         slash_commands = ["/mode", "/backend", "/provider", "/model", "/setkey", "/clear", "/new", "/quit", "/test", "/help"]
         self.completer = WordCompleter(slash_commands, ignore_case=True)
-        self.input_buffer = Buffer(multiline=False, completer=self.completer)
-
-        self.input_window = Window(
-             content=BufferControl(buffer=self.input_buffer),
-             height=1, 
-             wrap_lines=False
+        self.input_window = TextArea(
+            multiline=True,
+            wrap_lines=True,
+            completer=self.completer,
+            dont_extend_height=True,
+            height=Dimension(min=1, max=6)
         )
+        self.input_buffer = self.input_window.buffer
         
         self.input_box = Frame(
             self.input_window,
