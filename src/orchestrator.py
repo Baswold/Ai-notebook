@@ -132,8 +132,8 @@ class Orchestrator:
             agent2_test_prompt = DEFAULT_AGENT2_TESTING_PROMPT
         
         self.agent1 = Agent1(self.llm, self.tools, agent1_prompt)
-        self.agent2_implementation = Agent2(self.llm, agent2_impl_prompt)
-        self.agent2_testing = Agent2(self.llm, agent2_test_prompt)
+        self.agent2_implementation = Agent2(self.llm, agent2_impl_prompt, tools=self.tools)
+        self.agent2_testing = Agent2(self.llm, agent2_test_prompt, tools=self.tools)
         self.testing_threshold = config.agents.testing_phase_threshold
         
         self.original_spec = idea_file.read_text() if idea_file.exists() else ""
@@ -182,9 +182,30 @@ class Orchestrator:
             lines = commit_instructions.split('\n')
             files_to_add = []
             commit_message = ""
-            
+
+            def extract_message(start_index: int) -> str:
+                line = lines[start_index]
+                message = ""
+
+                if '-m "' in line:
+                    message_start = line.find('"') + 1
+                    message = line[message_start:]
+                elif "-m \"" in line:
+                    message_start = line.find("\"") + 1
+                    message = line[message_start:]
+                else:
+                    return ""
+
+                i = start_index + 1
+                while i < len(lines) and '"' not in lines[i]:
+                    message += '\n' + lines[i]
+                    i += 1
+                if i < len(lines):
+                    message += lines[i][:lines[i].find('"')]
+                return message
+
             in_commit_section = False
-            for line in lines:
+            for idx, line in enumerate(lines):
                 if line.startswith('git add'):
                     # Extract files from git add command
                     parts = line.split()
@@ -192,29 +213,13 @@ class Orchestrator:
                         files_to_add.extend(parts[2:])
                 elif line.startswith('git commit'):
                     in_commit_section = True
+                    commit_message = extract_message(idx)
+                    if commit_message:
+                        break
                 elif in_commit_section and ('-m "' in line or '-m \"' in line):
-                    # Extract commit message (handle both single and double quotes)
-                    if '-m "' in line:
-                        message_start = line.find('"') + 1
-                        # Look for closing quote in subsequent lines
-                        commit_message = line[message_start:]
-                        i = lines.index(line) + 1
-                        while i < len(lines) and '"' not in lines[i]:
-                            commit_message += '\n' + lines[i]
-                            i += 1
-                        if i < len(lines):
-                            commit_message += lines[i][:lines[i].find('"')]
-                    elif "-m \"" in line:
-                        message_start = line.find("\"") + 1
-                        # Look for closing quote in subsequent lines
-                        commit_message = line[message_start:]
-                        i = lines.index(line) + 1
-                        while i < len(lines) and "\"" not in lines[i]:
-                            commit_message += '\n' + lines[i]
-                            i += 1
-                        if i < len(lines):
-                            commit_message += lines[i][:lines[i].find("\"")]
-                    break
+                    commit_message = extract_message(idx)
+                    if commit_message:
+                        break
             
             if not files_to_add:
                 # Default to adding all changes
@@ -321,32 +326,6 @@ class Orchestrator:
         
         return "Tests executed"
 
-    def _should_commit_based_on_tests(self, test_results: str, review: ReviewResult) -> bool:
-        """
-        Decide whether to commit based on test results and current phase.
-        
-        Strategy:
-        - In testing phase: Always commit (Agent 2 will review test failures)
-        - In implementation phase: Only commit if tests pass or no tests exist
-        """
-        if self.state.phase == "testing":
-            # In testing phase, always commit so Agent 2 can review test failures
-            return True
-        
-        # In implementation phase, check if tests pass
-        lines = test_results.lower()
-        
-        # If tests explicitly passed, commit
-        if ("passed" in lines and "failed" not in lines) or "all tests passed" in lines:
-            return True
-        
-        # If tests failed, don't commit
-        if "failed" in lines or "error" in lines:
-            return False
-        
-        # If unclear, commit anyway (better to have Agent 2 review)
-        return True
-    
     def _init_git(self):
         git_dir = self.workspace / ".git"
         if not git_dir.exists():
@@ -389,6 +368,7 @@ Begin implementation now.
         
         codebase_context = self.context_builder.build_agent1_context()
         last_commit = self.context_builder.get_last_commit()
+        review_memory_agent = "reviewer" if self.state.phase == "implementation" else "testing"
         
         task_summary = self.original_spec[:500] + "..." if len(self.original_spec) > 500 else self.original_spec
         
@@ -435,7 +415,7 @@ Begin implementation now.
         # This prevents same-model bias where Agent 2 might be persuaded by
         # Agent 1's confident-but-wrong self-assessments.
         # Agent 2 reviews ONLY: original spec + current codebase + git log
-        codebase_for_review = self.context_builder.build_agent2_context()
+        codebase_for_review = self.context_builder.build_agent2_context(memory_agent=review_memory_agent)
         git_log = self.context_builder.get_git_log()
         
         try:
@@ -445,7 +425,8 @@ Begin implementation now.
             review = agent2.review(
                 original_spec=self.original_spec,
                 codebase_context=codebase_for_review,
-                git_log=git_log
+                git_log=git_log,
+                memory_agent=review_memory_agent
             )
             self.state.total_agent2_usage = self.state.total_agent2_usage + review.usage
             self.state.last_review = review
@@ -490,12 +471,10 @@ Begin implementation now.
         test_results = self._run_tests_before_commit()
         
         if test_results:
-            # Only commit if tests pass or if this is the testing phase
-            should_commit = self._should_commit_based_on_tests(test_results, review)
-            if should_commit:
-                self._execute_git_commit(review.commit_instructions)
-            else:
-                self._update_status("Skipping commit: tests are failing")
+            lowered = test_results.lower()
+            if "failed" in lowered or "error" in lowered:
+                self._update_status("Tests failing; committing changes for review anyway")
+            self._execute_git_commit(review.commit_instructions)
         else:
             # No tests found, proceed with commit
             self._execute_git_commit(review.commit_instructions)

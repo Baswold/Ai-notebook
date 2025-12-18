@@ -24,6 +24,7 @@ A production-grade autonomous coding agent system that uses multi-agent verifica
 
 📦 **Production Features**
 - Persistent progress tracking with `.completeness_state.json`
+- Per-agent memories stored in `workspace/memories/` so lessons survive context refreshes
 - Git-based version control with automatic commits
 - Token usage tracking and reporting
 - Flexible workspace configuration

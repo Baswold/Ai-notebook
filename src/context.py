@@ -2,6 +2,8 @@ import subprocess
 from pathlib import Path
 from typing import List, Optional, Set
 
+from .memory import read_memory, get_memory_path
+
 
 class ContextBuilder:
     # Extensions for code files that Agent 2 should review
@@ -93,6 +95,23 @@ class ContextBuilder:
                     continue
         
         return "\n".join(contents)
+
+    def _build_memory_section(self, agent: Optional[str]) -> str:
+        if not agent:
+            return ""
+
+        content = read_memory(self.workspace, agent)
+        if not content.strip():
+            return ""
+
+        path = get_memory_path(self.workspace, agent, ensure_dir=True).relative_to(self.workspace)
+        label = agent.replace("_", " ").title()
+        return f"""### Persistent Memory ({label})
+Path: {path}
+```
+{content}
+```
+"""
     
     def read_code_only_files(self) -> str:
         """
@@ -270,6 +289,8 @@ class ContextBuilder:
         else:
             files_str = self.read_all_source_files()
         
+        memories = self._build_memory_section("implementer")
+        
         return f"""### File Tree
 ```
 {tree}
@@ -277,9 +298,10 @@ class ContextBuilder:
 
 ### Source Files
 {files_str}
+{memories}
 """
     
-    def build_agent2_context(self, run_tests: bool = True) -> str:
+    def build_agent2_context(self, run_tests: bool = True, memory_agent: Optional[str] = None) -> str:
         """
         Build context for Agent 2 review.
         
@@ -287,6 +309,7 @@ class ContextBuilder:
         - Uses read_code_only_files() to exclude .md/.txt files
         - Includes test execution results (factual evidence)
         - Git log included but Agent 2 trained to ignore completion claims
+        - Reviewer/testing memory is appended explicitly as the only allowed markdown context
         """
         tree = self.build_file_tree()
         
@@ -294,6 +317,7 @@ class ContextBuilder:
         files_str = self.read_code_only_files()
         
         git_log = self.get_git_log()
+        memories = self._build_memory_section(memory_agent)
         
         context = f"""### File Tree
 ```
@@ -307,6 +331,7 @@ class ContextBuilder:
 ```
 {git_log}
 ```
+{memories}
 """
         
         # Add test results if requested (factual verification)

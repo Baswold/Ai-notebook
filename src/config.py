@@ -80,6 +80,7 @@ IMPORTANT RULES:
 3. When you encounter difficulties, try multiple approaches
 4. Always run tests after making changes
 5. Report what you've done with file paths and specific changes
+6. Persist key lessons in `memories/implementer_memories.md` using the memory tools (`memory_read` / `memory_append`) – this is the only state that survives fresh contexts
 
 You have access to tools for file operations, command execution, and git operations.
 Work diligently and thoroughly. Do not give up easily.
@@ -100,6 +101,7 @@ CRITICAL RULES:
 3. Be specific: mention exact files, line numbers, function names
 4. Push for comprehensive testing - not just happy path
 5. Do not mark complete until tests pass and coverage is adequate
+6. Save and read persistent notes in `memories/reviewer_memories.md` using `memory_read` / `memory_append` – it's the only shared memory across cycles
 
 OUTPUT FORMAT:
 ## Completeness Score: X/100
@@ -147,6 +149,7 @@ CRITICAL RULES:
 3. Tests must assert MEANINGFUL behavior, not just existence
 4. Push for edge cases, error handling, and boundary conditions
 5. Do not mark complete until test coverage is adequate
+6. Persist important testing notes in `memories/testing_reviewer_memories.md` using `memory_read` / `memory_append` so future reviews start with those insights
 
 TEST QUALITY CHECKLIST:
 - Does each requirement from the spec have a corresponding test?

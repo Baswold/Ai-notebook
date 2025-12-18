@@ -6,6 +6,8 @@ from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, field
 import json
 
+from .memory import append_memory, read_memory, get_memory_path
+
 
 @dataclass
 class ToolResult:
@@ -99,6 +101,47 @@ class ToolRegistry:
                         }
                     },
                     "required": ["path"]
+                }
+            }
+        })
+
+        self.register("memory_read", self._memory_read, {
+            "type": "function",
+            "function": {
+                "name": "memory_read",
+                "description": "Read the saved notes for an agent (persist across cycles)",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "agent": {
+                            "type": "string",
+                            "description": "Which memory to read: implementer, reviewer, or testing",
+                            "default": "implementer"
+                        }
+                    }
+                }
+            }
+        })
+
+        self.register("memory_append", self._memory_append, {
+            "type": "function",
+            "function": {
+                "name": "memory_append",
+                "description": "Append a timestamped note to an agent-specific memory file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "agent": {
+                            "type": "string",
+                            "description": "Which memory to write: implementer, reviewer, or testing",
+                            "default": "implementer"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Short note to append (what you wish you knew earlier)"
+                        }
+                    },
+                    "required": ["content"]
                 }
             }
         })
@@ -382,6 +425,25 @@ class ToolRegistry:
             return ToolResult(True, f"Deleted {path}")
         except Exception as e:
             return ToolResult(False, "", str(e))
+
+    def _memory_read(self, agent: str = "implementer") -> ToolResult:
+        try:
+            path = get_memory_path(self.workspace, agent, ensure_dir=True)
+            content = read_memory(self.workspace, agent)
+            if not content.strip():
+                rel = path.relative_to(self.workspace)
+                return ToolResult(True, f"No memories saved yet for {rel}")
+            return ToolResult(True, content)
+        except Exception as e:
+            return ToolResult(False, "", str(e))
+
+    def _memory_append(self, content: str, agent: str = "implementer") -> ToolResult:
+        try:
+            path = append_memory(self.workspace, agent, content)
+            rel = path.relative_to(self.workspace)
+            return ToolResult(True, f"Saved memory to {rel}")
+        except Exception as e:
+            return ToolResult(False, "", str(e))
     
     def _list_directory(self, path: str = ".", recursive: bool = False) -> ToolResult:
         try:
@@ -432,7 +494,24 @@ class ToolRegistry:
         return self._bash("git status")
     
     def _git_add(self, paths: List[str]) -> ToolResult:
-        paths_str = " ".join(f'"{p}"' for p in paths)
+        # Prevent memory files from being staged
+        filtered_paths: List[str] = []
+        exclude_memory = any(p in (".", "./") for p in paths)
+
+        for p in paths:
+            if p.startswith("memories"):
+                continue
+            filtered_paths.append(p)
+
+        if not filtered_paths:
+            filtered_paths.append(".")
+            exclude_memory = True
+
+        parts = [f'"{p}"' for p in filtered_paths]
+        if exclude_memory:
+            parts.extend([":!memories", ":!memories/**"])
+
+        paths_str = " ".join(parts)
         return self._bash(f"git add {paths_str}")
     
     def _git_commit(self, message: str) -> ToolResult:

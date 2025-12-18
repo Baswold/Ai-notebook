@@ -6,8 +6,13 @@ Simple test script to verify the completeness loop improvements without LLM depe
 import sys
 from pathlib import Path
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# Add project root and src to path (defensive for various runners)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+paths_to_add = [PROJECT_ROOT, PROJECT_ROOT / "src"]
+for p in paths_to_add:
+    p_str = str(p)
+    if p_str not in sys.path:
+        sys.path.insert(0, p_str)
 
 def test_commit_message_sanitization():
     """Test the commit message sanitization functionality."""
@@ -89,13 +94,34 @@ git commit -m "[Core] Add main functionality
 
 Completeness: 75%"'''
     
-    # Parse the instructions
+    # Parse the instructions (mirrors orchestrator logic)
     lines = commit_instructions.split('\n')
     files_to_add = []
     commit_message = ""
-    
+
+    def extract_message(start_index: int) -> str:
+        line = lines[start_index]
+        message = ""
+
+        if '-m "' in line:
+            message_start = line.find('"') + 1
+            message = line[message_start:]
+        elif "-m \"" in line:
+            message_start = line.find("\"") + 1
+            message = line[message_start:]
+        else:
+            return ""
+
+        i = start_index + 1
+        while i < len(lines) and '"' not in lines[i]:
+            message += '\n' + lines[i]
+            i += 1
+        if i < len(lines):
+            message += lines[i][:lines[i].find('"')]
+        return message
+
     in_commit_section = False
-    for line in lines:
+    for idx, line in enumerate(lines):
         if line.startswith('git add'):
             # Extract files from git add command
             parts = line.split()
@@ -103,29 +129,13 @@ Completeness: 75%"'''
                 files_to_add.extend(parts[2:])
         elif line.startswith('git commit'):
             in_commit_section = True
+            commit_message = extract_message(idx)
+            if commit_message:
+                break
         elif in_commit_section and ('-m "' in line or '-m \"' in line):
-            # Extract commit message (handle both single and double quotes)
-            if '-m "' in line:
-                message_start = line.find('"') + 1
-                # Look for closing quote in subsequent lines
-                commit_message = line[message_start:]
-                i = lines.index(line) + 1
-                while i < len(lines) and '"' not in lines[i]:
-                    commit_message += '\n' + lines[i]
-                    i += 1
-                if i < len(lines):
-                    commit_message += lines[i][:lines[i].find('"')]
-            elif "-m \"" in line:
-                message_start = line.find("\"") + 1
-                # Look for closing quote in subsequent lines
-                commit_message = line[message_start:]
-                i = lines.index(line) + 1
-                while i < len(lines) and "\"" not in lines[i]:
-                    commit_message += '\n' + lines[i]
-                    i += 1
-                if i < len(lines):
-                    commit_message += lines[i][:lines[i].find("\"")]
-            break
+            commit_message = extract_message(idx)
+            if commit_message:
+                break
     
     print(f"Files to add: {files_to_add}")
     print(f"Commit message: {commit_message[:50]}...")

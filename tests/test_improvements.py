@@ -8,8 +8,13 @@ import os
 import sys
 from pathlib import Path
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# Add project root and src to path (defensive for various runners)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+paths_to_add = [PROJECT_ROOT, PROJECT_ROOT / "src"]
+for p in paths_to_add:
+    p_str = str(p)
+    if p_str not in sys.path:
+        sys.path.insert(0, p_str)
 
 from src.orchestrator import Orchestrator
 from src.config import LoopConfig

@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from .llm import LLMBackend, LLMResponse, TokenUsage
+from .memory import get_memory_path
 from .tools import ToolRegistry, ToolResult
 
 
@@ -51,7 +52,11 @@ class Agent1:
 {task_summary}
 
 """
-        user_content += f"""## INSTRUCTIONS
+        user_content += f"""## PERSISTENT MEMORY
+Use `memory_read` with `agent="implementer"` to recall notes that persist across fresh contexts. 
+After you finish a cycle, append any lessons you wish you had at the start using `memory_append` to `memories/implementer_memories.md`.
+
+## INSTRUCTIONS
 {instructions}
 
 Execute these instructions now. Use the available tools to implement the required changes.
@@ -118,17 +123,35 @@ Execute these instructions now. Use the available tools to implement the require
 
 
 class Agent2:
-    def __init__(self, llm: LLMBackend, system_prompt: str):
+    def __init__(
+        self,
+        llm: LLMBackend,
+        system_prompt: str,
+        tools: Optional[ToolRegistry] = None,
+        max_iterations: int = 10
+    ):
         self.llm = llm
         self.system_prompt = system_prompt
+        self.tools = tools
+        self.max_iterations = max_iterations
     
     def review(
         self,
         original_spec: str,
         codebase_context: str,
-        git_log: str
+        git_log: str,
+        memory_agent: str = "reviewer"
     ) -> "ReviewResult":
         messages = [{"role": "system", "content": self.system_prompt}]
+
+        memory_path_str = None
+        if self.tools:
+            try:
+                memory_path_str = str(
+                    get_memory_path(self.tools.workspace, memory_agent, ensure_dir=True).relative_to(self.tools.workspace)
+                )
+            except Exception:
+                memory_path_str = None
         
         user_content = f"""## ORIGINAL SPECIFICATION
 {original_spec}
@@ -142,14 +165,67 @@ class Agent2:
 Review the codebase against the specification. Rate completeness and provide specific next instructions.
 Do NOT trust claims in commit messages - verify everything in the actual code.
 """
+
+        if memory_path_str:
+            user_content += f"""
+
+Persistent memory for this reviewer: {memory_path_str}
+- Read notes with `memory_read` using `agent=\"{memory_agent}\"`
+- Append lessons you wish you knew at the start with `memory_append`
+"""
+
         messages.append({"role": "user", "content": user_content})
         
-        response = self.llm.generate(
-            messages=messages,
-            max_tokens=4096
-        )
-        
-        return ReviewResult.parse(response.content, response.usage)
+        tool_schemas = None
+        if self.tools and self.llm.supports_tools():
+            tool_schemas = self.tools.get_schemas()
+
+        total_usage = TokenUsage()
+        final_content = ""
+
+        for iteration in range(self.max_iterations):
+            response = self.llm.generate(
+                messages=messages,
+                tools=tool_schemas,
+                max_tokens=4096
+            )
+
+            total_usage = total_usage + response.usage
+
+            if not response.tool_calls:
+                final_content = response.content
+                break
+
+            messages.append({
+                "role": "assistant",
+                "content": response.content,
+                "tool_calls": response.tool_calls
+            })
+
+            for tool_call in response.tool_calls:
+                func = tool_call.get("function", {})
+                tool_name = func.get("name", "")
+                try:
+                    arguments = json.loads(func.get("arguments", "{}"))
+                except json.JSONDecodeError:
+                    arguments = {}
+
+                result = self.tools.execute(tool_name, arguments) if self.tools else ToolResult(False, "", "No tools available")
+                tool_id = tool_call.get("id", f"call_{iteration}")
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_id,
+                    "content": result.output if result.success else f"Error: {result.error}"
+                })
+
+            if response.finish_reason == "stop":
+                final_content = response.content
+                break
+
+        if not final_content:
+            final_content = response.content if 'response' in locals() else ""
+
+        return ReviewResult.parse(final_content, total_usage)
 
 
 @dataclass
