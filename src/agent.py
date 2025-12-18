@@ -1,5 +1,7 @@
 import json
 import asyncio
+import os
+from datetime import datetime
 from .llm_backend import get_backend
 from .tools import TOOLS_DEF, TOOL_FUNCTIONS
 from .config import GLOBAL_CONFIG
@@ -109,6 +111,18 @@ Never say:
 Remember: The user explicitly does NOT want simulations or documentation. They want runnable, complete, production-ready notebooks with real implementations where every piece of code is in an EXECUTABLE CODE CELL. Anything less is a failure.
 """}
         ]
+        self.log_file = "completeness_log.txt"
+        self._log("Agent initialized")
+        self.max_steps = 50  # Default max steps
+        self.current_step_count = 0
+
+    async def step_gen(self, user_input, continue_from_previous=False):
+        if not continue_from_previous:
+            self._log(f"User input: {user_input[:100]}...")
+            self.history.append({"role": "user", "content": user_input})
+            self.current_step_count = 0
+        else:
+            self._log(f"Continuing from step {self.current_step_count}")
 
     async def step_gen(self, user_input):
         # Log user input
@@ -124,14 +138,14 @@ Remember: The user explicitly does NOT want simulations or documentation. They w
         while step_count < MAX_STEPS:
             step_count += 1
             try:
-                if step_count == 1:
+                if self.current_step_count == 1 and not continue_from_previous:
                     yield {"type": "status", "content": "Thinking..."}
                 else:
-                    yield {"type": "status", "content": f"Thinking (Step {step_count})..."}
+                    yield {"type": "status", "content": f"Thinking (Step {self.current_step_count}/{self.max_steps})..."}
 
                 # Call LLM
                 response = await backend.chat_completion(self.history, tools=TOOLS_DEF)
-                
+
                 if "error" in response:
                     error_msg = f"LLM Error: {response['error']}"
                     logger.log_agent_output("error", error_msg)
@@ -140,25 +154,25 @@ Remember: The user explicitly does NOT want simulations or documentation. They w
 
                 choice = response["choices"][0]
                 message = choice["message"]
-                
+
                 # Check for tool calls
                 if message.get("tool_calls"):
                     self.history.append(message)
-                    
+
                     # Yield thought if present
                     if message.get("content"):
                          logger.log_agent_output("thought", message["content"])
                          yield {"type": "thought", "content": message["content"]}
-                    
+
                     tool_calls = message["tool_calls"]
-                    
+
                     for tool_call in tool_calls:
                         function_name = tool_call["function"]["name"]
                         arguments = json.loads(tool_call["function"]["arguments"])
 
                         logger.log_agent_output("tool_call", "", name=function_name, arguments=arguments)
                         yield {"type": "tool_call", "name": function_name, "arguments": arguments}
-                        
+
                         if function_name in TOOL_FUNCTIONS:
                             yield {"type": "status", "content": f"Executing {function_name}..."}
                             try:
@@ -167,9 +181,11 @@ Remember: The user explicitly does NOT want simulations or documentation. They w
                                     asyncio.to_thread(TOOL_FUNCTIONS[function_name], **arguments),
                                     timeout=30.0
                                 )
+                                self._log(f"Tool result: {str(result)[:100]}...")
                             except asyncio.TimeoutError:
                                 result = f"Error: Tool {function_name} timed out after 30 seconds."
-                                
+                                self._log(f"Tool timeout: {function_name}")
+
                                 # Verification Check: Did it actually succeed despite timeout?
                                 if function_name in ["add_multiple_cells", "add_cell"] and "filename" in arguments:
                                      try:
@@ -179,37 +195,41 @@ Remember: The user explicitly does NOT want simulations or documentation. They w
                                          if not verify_res.startswith("Error"):
                                              # It returned valid JSON content, so the write likely worked.
                                              result += " BUT verification check shows the notebook was updated successfully. Do not retry."
+                                             self._log("Verification check passed despite timeout")
                                      except Exception:
                                          pass
                             except Exception as tool_e:
                                 result = f"Error executing tool {function_name}: {str(tool_e)}"
+                                self._log(f"Tool error: {str(tool_e)}")
                         else:
                             result = f"Error: Tool {function_name} not found."
 
                         logger.log_agent_output("tool_result", result, name=function_name)
                         yield {"type": "tool_result", "name": function_name, "result": result}
-                        
+
                         # Append result to history
                         self.history.append({
                             "role": "tool",
                             "tool_call_id": tool_call["id"],
                             "content": str(result)
                         })
-                    
+
                     # Loop continues to next step to let LLM process results
                     continue
-                
+
                 else:
                     # No tool calls, just a message (Final Answer)
                     # Only append if valid content
                     if message.get("content"):
+                        self._log(f"Final message: {message['content'][:100]}...")
                         self.history.append(message)
                         logger.log_agent_output("message", message["content"])
                         yield {"type": "message", "content": message["content"]}
 
                     # We are done
+                    self._log("Agent completed successfully")
                     break
-                    
+
             except Exception as e:
                 error_msg = f"Agent Error: {str(e)}"
                 logger.log_agent_output("error", error_msg)
@@ -222,4 +242,5 @@ Remember: The user explicitly does NOT want simulations or documentation. They w
              yield {"type": "error", "content": error_msg}
 
     def clear_history(self):
+        self._log("History cleared")
         self.history = [self.history[0]]

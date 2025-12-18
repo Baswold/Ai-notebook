@@ -38,14 +38,18 @@ class AlmanacUI:
 
         self.app = None
         self.is_processing = False
-        self.input_queue = [] 
-        
+        self.input_queue = []
+
         # Scroll State
         self.autoscroll = True
-        
+
         # Exit Logic State
         self.last_exit_attempt = 0
         self.notification_text = ""
+
+        # Max iterations state
+        self.waiting_for_continuation = False
+        self.current_max_steps = 50
 
         # Key bindings
         self.kb = KeyBindings()
@@ -316,7 +320,7 @@ class AlmanacUI:
     async def handle_input(self, text):
         self.is_processing = True
         spinner = asyncio.create_task(self.spinner_task())
-        
+
         # Handle commands
         if text.startswith("/"):
             await self.handle_slash_command(text)
@@ -324,18 +328,70 @@ class AlmanacUI:
             await spinner
             return
 
+        # Check if waiting for continuation response
+        if self.waiting_for_continuation:
+            self.waiting_for_continuation = False
+            if text.lower().strip() in ["yes", "y"]:
+                self.print_rich(f"\n> {text}\n\n")
+                self.print_rich("Extending iterations by 50 and continuing...\n\n")
+                self.agent.extend_max_steps(50)
+                # Continue from where we left off
+                try:
+                    async for event in self.agent.step_gen("", continue_from_previous=True):
+                        event_type = event["type"]
+                        content = event.get("content", "")
+
+                        if event_type == "status":
+                            pass
+                        elif event_type == "thought":
+                            self.print_rich(f"\nThinking:\n{content}\n")
+                        elif event_type == "tool_call":
+                            self.print_rich(f"\nCalling Tool: {event['name']}\n")
+                            args_str = str(event['arguments'])
+                            if len(args_str) > 500:
+                                args_str = args_str[:500] + "... (truncated)"
+                            self.print_rich(f"{args_str}\n")
+                        elif event_type == "tool_result":
+                            short_res = str(event["result"])[:200] + "..." if len(str(event['result'])) > 200 else str(event['result'])
+                            self.print_rich(f"Result: {short_res}\n")
+                        elif event_type == "message":
+                            self.print_rich(f"\nAlmanac:\n{content}\n")
+                        elif event_type == "error":
+                            self.print_rich(f"Error: {content}\n")
+                        elif event_type == "max_iterations":
+                            self.print_rich(f"\n{content}\n")
+                            self.print_rich("Type 'yes' and press Enter to add 50 more iterations, or anything else to stop.\n")
+                            self.waiting_for_continuation = True
+                            self.current_max_steps = event.get("current_steps", 50)
+
+                        self.app.invalidate()
+                finally:
+                    self.is_processing = False
+                    await spinner
+                    # Process next message in queue if any
+                    if self.input_queue:
+                        next_text = self.input_queue.pop(0)
+                        asyncio.create_task(self.handle_input(next_text))
+                return
+            else:
+                self.print_rich(f"\n> {text}\n\n")
+                self.print_rich("Stopping. You can start a new task now.\n")
+                self.is_processing = False
+                await spinner
+                return
+
         # Echo user input
-        self.print_rich(f"\n> {text}\n\n") 
+        self.print_rich(f"\n> {text}\n\n")
 
         self.notification_text = ""
-        
+
         try:
             async for event in self.agent.step_gen(text):
                 event_type = event["type"]
                 content = event.get("content", "")
 
                 if event_type == "status":
-                    pass 
+                    pass
                 elif event_type == "thought":
                     self.print_rich(f"\nThinking:\n{content}\n")
                 elif event_type == "tool_call":
@@ -351,12 +407,17 @@ class AlmanacUI:
                     self.print_rich(f"\nAlmanac:\n{content}\n")
                 elif event_type == "error":
                     self.print_rich(f"Error: {content}\n")
-                
+                elif event_type == "max_iterations":
+                    self.print_rich(f"\n{content}\n")
+                    self.print_rich("Type 'yes' and press Enter to add 50 more iterations, or anything else to stop.\n")
+                    self.waiting_for_continuation = True
+                    self.current_max_steps = event.get("current_steps", 50)
+
                 self.app.invalidate()
         finally:
             self.is_processing = False
             await spinner
-            
+
             # Process next message in queue if any
             if self.input_queue:
                 next_text = self.input_queue.pop(0)
@@ -401,6 +462,10 @@ class AlmanacUI:
             if args:
                  if GLOBAL_CONFIG.set_backend(args[0]):
                     self.print_rich(f"Backend switched to: {args[0]}\n")
+                    # Display usage warning if present
+                    backend_config = GLOBAL_CONFIG.get_active_backend_config()
+                    if "usage_warning" in backend_config:
+                        self.print_rich(backend_config["usage_warning"] + "\n")
             else:
                 # Interactive Menu
                 opts = [(k, k) for k in GLOBAL_CONFIG.BACKENDS.keys()]
@@ -415,22 +480,13 @@ class AlmanacUI:
                  GLOBAL_CONFIG.set_model(args[0])
                  self.print_rich(f"Model set to: {args[0]}\n")
              else:
-                 # Provide some common defaults + current
-                 defaults = [
-                     ("labs-devstral-small-2512", "Devstral Small 2"),
-                     ("mistral-small-latest", "Mistral Small"),
-                     ("llama3", "Llama 3"),
-                 ]
-                 # Ensure current is in list if not default
-                 current = GLOBAL_CONFIG.active_model
-                 if not any(d[0] == current for d in defaults):
-                     defaults.insert(0, (current, current + " (Current)"))
-                     
+                 # Get backend-specific model options
+                 model_options = GLOBAL_CONFIG.get_model_options_for_backend()
                  self.show_menu(
-                    title="Select Model",
-                    options=defaults,
+                    title=f"Select Model ({GLOBAL_CONFIG.active_backend})",
+                    options=model_options,
                     callback=lambda val: asyncio.create_task(self._set_model_cb(val))
-                )
+                 )
 
         elif cmd == "/setkey":
             if args:
@@ -458,6 +514,10 @@ class AlmanacUI:
     async def _set_backend_cb(self, val):
         if GLOBAL_CONFIG.set_backend(val):
             self.print_rich(f"Backend switched to: {val}\n")
+            # Display usage warning if present
+            backend_config = GLOBAL_CONFIG.get_active_backend_config()
+            if "usage_warning" in backend_config:
+                self.print_rich(backend_config["usage_warning"] + "\n")
             
     async def _set_model_cb(self, val):
         GLOBAL_CONFIG.set_model(val)
